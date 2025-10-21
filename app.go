@@ -71,7 +71,7 @@ func (a *App) attachDBs() error {
 		}
 		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", path, name)
 		if _, err := a.db.Exec(attachQuery); err != nil {
-			a.logger.Debug(err.Error())
+			a.logger.Debug(err.Error(), slog.String("filename", path))
 			return err
 		}
 		a.logger.Debug(fmt.Sprintf("Attached %s successfully", name))

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/csv"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -19,6 +24,34 @@ var (
 	// These invalid characters are replaced with a single underscore.
 	reInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 )
+
+func determineFieldType(value string) any {
+	lowerValue := strings.ToLower(value)
+	if lowerValue == "true" {
+		return true
+	}
+	if lowerValue == "false" {
+		return false
+	}
+	if i, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(value, 64); err == nil {
+		return f
+	}
+	return value
+}
+
+func parseFile(selection string) (string, string) {
+	baseName := filepath.Base(selection)
+	fileExt := filepath.Ext(baseName)
+	dbNameWithExt := strings.TrimSuffix(baseName, fileExt)
+
+	sanitizedName := reDuplicate.ReplaceAllString(dbNameWithExt, "")
+	dbName := reInvalidChars.ReplaceAllString(sanitizedName, "_")
+	dbName = strings.ToLower(dbName)
+	return dbName, fileExt
+}
 
 func (a *App) importDB() {
 	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
@@ -37,13 +70,7 @@ func (a *App) importDB() {
 	}
 
 	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
-
-	baseName := filepath.Base(selection)
-	dbNameWithExt := strings.TrimSuffix(baseName, filepath.Ext(baseName))
-
-	sanitizedName := reDuplicate.ReplaceAllString(dbNameWithExt, "")
-	dbName := reInvalidChars.ReplaceAllString(sanitizedName, "_")
-	dbName = strings.ToLower(dbName)
+	dbName, _ := parseFile(selection)
 	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", selection, dbName)
 	if _, err = a.db.Exec(attachQuery); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to ATTACH database %s: %v", dbName, err))
@@ -58,10 +85,88 @@ func (a *App) importDB() {
 }
 
 func (a *App) exportDB() {
-
 	return
 }
 func (a *App) uploadDB() {
+	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select data file to upload.",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "SQLite Data Files (*.csv, *.json, *.sql)", Pattern: "*.csv;*.json;*.sql;"},
+		}})
+	if err != nil {
+		a.logger.Error(err.Error())
+		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+		return
+	}
+	if selection == "" {
+		return
+	}
 
-	return
+	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
+	dbName, ext := parseFile(selection)
+	a.logger.Debug(fmt.Sprintf("%s %s", dbName, ext))
+	var df *Dataframe
+	switch ext {
+	case ".json":
+		file, err := os.ReadFile(selection)
+		if err != nil {
+			a.logger.Error(err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+			return
+		}
+		if err = json.Unmarshal(file, &df); err != nil {
+			a.logger.Error(err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+			return
+		}
+		a.logger.Debug("converting df", slog.Any("dataframe", df))
+		if err = df.convertToDB(a.db, dbName); err != nil {
+			a.logger.Error("Error converting to db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+			return
+		}
+		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
+		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
+	case ".csv":
+		file, err := os.ReadFile(selection)
+		if err != nil {
+			a.logger.Error(err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+			return
+		}
+
+		csvReader := csv.NewReader(bytes.NewReader(file))
+		if csvReader == nil {
+			a.logger.Error("unable to read csv")
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "unable to read csv"})
+			return
+		}
+		rows, err := csvReader.ReadAll()
+		if err != nil {
+			a.logger.Error("unable to read csv")
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "unable to read csv"})
+			return
+		}
+
+		fieldNames := rows[0]
+		data := make(Dataframe, 0, len(fieldNames)-1)
+		for _, row := range rows[1:] {
+			rowData := make(map[string]any)
+			for i, name := range fieldNames {
+				if i < len(row) {
+					rowData[name] = determineFieldType(row[i])
+				}
+			}
+			data = append(data, rowData)
+		}
+
+		df = &data
+		if err = df.convertToDB(a.db, dbName); err != nil {
+			a.logger.Error("Error converting to db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+			return
+		}
+		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
+		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
+	}
 }
