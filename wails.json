@@ -1,0 +1,14 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "sqlitegui",
+  "outputfilename": "sqlitegui",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "http://localhost:5173/",
+  "author": {
+    "name": "Terrence Moore",
+    "email": "tmm6907@gmail.com"
+  },
+  "info": {}
+}
