@@ -57,7 +57,6 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 	}
 	defer newDB.Close() // Defer closing the new file DB connection
 
-	// --- 2. Schema Inference and Table Creation (using newDB) ---
 	firstRow := d[0]
 	columnDefinitions := ""
 	columnNames := []string{}
@@ -80,7 +79,6 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 	tableName := name
 	createTableSQL := fmt.Sprintf("CREATE TABLE %s (%s)", tableName, columnDefinitions)
 
-	// Use newDB for all operations on the new file
 	_, err = newDB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
 	if err != nil {
 		return fmt.Errorf("error dropping existing table: %w", err)
@@ -91,7 +89,6 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 		return fmt.Errorf("error creating table: %w", err)
 	}
 
-	// --- 3. Prepare and Insert Data (using newDB) ---
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(columnNames)), ", ")
 	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
@@ -113,21 +110,19 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 	for _, row := range d {
 		values := make([]any, len(columnNames))
 
-		// CRITICAL FIX: Serialization logic for complex types
 		for i, colName := range columnNames {
 			value := row[colName]
 			v := reflect.ValueOf(value)
 
-			// Check for complex types (Slice, Map, Struct, Array)
 			if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Map || v.Kind() == reflect.Struct || v.Kind() == reflect.Array) {
 				jsonBytes, marshalErr := json.Marshal(value)
 				if marshalErr != nil {
 					tx.Rollback()
 					return fmt.Errorf("failed to marshal complex type for column %s: %w", colName, marshalErr)
 				}
-				values[i] = string(jsonBytes) // Store the JSON string (TEXT)
+				values[i] = string(jsonBytes)
 			} else {
-				values[i] = value // Store simple types as is
+				values[i] = value
 			}
 		}
 
@@ -142,17 +137,12 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 		return fmt.Errorf("error committing transaction: %w", err)
 	}
 
-	// --- 4. Attach and Record Metadata (using db) ---
-	// This uses the passed-in application DB handle (db)
-
-	// ATTACH the newly created database file to the application DB connection
 	attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, name)
 	_, err = db.Exec(attachQuery)
 	if err != nil {
 		return fmt.Errorf("failed to attach database %s: %w", name, err)
 	}
 
-	// Record the new database file's metadata in the application's primary DB
 	_, err = db.Exec("INSERT into dbs (name, path) VALUES (?,?);", name, dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to record new DB metadata in db: %w", err)

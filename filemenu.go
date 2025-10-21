@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -106,14 +107,14 @@ func (a *App) uploadDB() {
 	dbName, ext := parseFile(selection)
 	a.logger.Debug(fmt.Sprintf("%s %s", dbName, ext))
 	var df *Dataframe
+	file, err := os.ReadFile(selection)
+	if err != nil {
+		a.logger.Error(err.Error())
+		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+		return
+	}
 	switch ext {
 	case ".json":
-		file, err := os.ReadFile(selection)
-		if err != nil {
-			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
-			return
-		}
 		if err = json.Unmarshal(file, &df); err != nil {
 			a.logger.Error(err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
@@ -127,14 +128,8 @@ func (a *App) uploadDB() {
 		}
 		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
 		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
-	case ".csv":
-		file, err := os.ReadFile(selection)
-		if err != nil {
-			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
-			return
-		}
 
+	case ".csv":
 		csvReader := csv.NewReader(bytes.NewReader(file))
 		if csvReader == nil {
 			a.logger.Error("unable to read csv")
@@ -168,5 +163,33 @@ func (a *App) uploadDB() {
 		}
 		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
 		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
+	case ".sql":
+		dbPath := a.getDBPath(dbName)
+		newDB, err := sqlx.Open("sqlite3", dbPath)
+		if err != nil {
+			a.logger.Error("Opening new db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
+			return
+		}
+		defer newDB.Close()
+		if _, err = newDB.Exec(string(file)); err != nil {
+			a.logger.Error("Opening new db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
+			return
+		}
+		attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
+		_, err = a.db.Exec(attachQuery)
+		if err != nil {
+			a.logger.Error("Executing build script: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Executing build script."})
+			return
+		}
+
+		_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
+		if err != nil {
+			a.logger.Error("adding to main db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "adding to main db."})
+			return
+		}
 	}
 }
