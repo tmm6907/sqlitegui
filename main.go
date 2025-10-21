@@ -21,6 +21,8 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+const SQLITE_DRIVER = "sqlite3"
+
 func NewSLogger() *slog.Logger {
 	// Configure the handler options
 	opts := &slog.HandlerOptions{
@@ -48,16 +50,39 @@ func main() {
 		AppMenu.Append(menu.EditMenu())
 	}
 	FileMenu := AppMenu.AddSubmenu("File")
-	FileMenu.AddText("Import", keys.CmdOrCtrl("I"), func(_ *menu.CallbackData) {
+	FileMenu.AddText("Open", keys.CmdOrCtrl("O"), func(_ *menu.CallbackData) {
 		app.importDB()
 	})
 	FileMenu.AddSeparator()
-	FileMenu.AddText("Export as ...", keys.CmdOrCtrl("E"), func(_ *menu.CallbackData) {
-		app.exportDB()
+	FileMenu.AddText("Create new db from data file", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {
+		app.uploadDB()
 	})
 	FileMenu.AddSeparator()
-	FileMenu.AddText("Create new db from file", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {
-		app.uploadDB()
+	exportSubMenu := menu.NewMenuFromItems(
+		menu.Text("Export to New DB File", keys.Combo("d", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+			app.exportDB(".db")
+		}),
+
+		menu.Text("Export to CSV (Zip)", keys.Combo("c", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+			app.exportDB(".csv")
+		}),
+
+		menu.Text("Export to JSON (Zip)", keys.Combo("j", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+			app.exportDB(".json")
+		}),
+
+		menu.Text("Export to SQL (ZIP)", keys.Combo("s", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+			app.exportDB(".sql")
+		}),
+
+		menu.Text("Export to DB (ZIP)", keys.Combo("b", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
+			app.exportDB("")
+		}),
+	)
+	FileMenu.Merge(exportSubMenu)
+	FileMenu.AddSeparator()
+	FileMenu.AddText("Settings", keys.CmdOrCtrl("S"), func(_ *menu.CallbackData) {
+
 	})
 	FileMenu.AddSeparator()
 	FileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {

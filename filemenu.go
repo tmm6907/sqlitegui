@@ -85,9 +85,54 @@ func (a *App) importDB() {
 	runtime.EventsEmit(a.ctx, "dbAttached", dbName)
 }
 
-func (a *App) exportDB() {
-	return
+func (a *App) exportDB(format string) {
+	switch format {
+	case ".db":
+		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			Title:           "Save Exported Data",
+			DefaultFilename: "export.db",
+			Filters: []runtime.FileFilter{
+				{DisplayName: "DB Export file (*.db)", Pattern: "*.db;"},
+			},
+		})
+		a.logger.Debug(fmt.Sprint(filePath, err))
+		// PRAGMA database_list; select * from each table and create new tables in main and export
+		// copy all tables into main db and export as .db
+	case ".csv":
+		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			Title:           "Save Exported Data",
+			DefaultFilename: "export.zip",
+			Filters: []runtime.FileFilter{
+				{DisplayName: "CSV Export file (*.zip)", Pattern: "*.zip;"},
+			},
+		})
+		a.logger.Debug(fmt.Sprint(filePath, err))
+		// PRAGMA database_list; new folders for each db, each table is a file
+
+	case ".json":
+		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			Title:           "Save Exported Data",
+			DefaultFilename: "export.zip",
+			Filters: []runtime.FileFilter{
+				{DisplayName: "JSON Export file (*.zip)", Pattern: "*.zip;"},
+			},
+		})
+		a.logger.Debug(fmt.Sprint(filePath, err))
+		// PRAGMA database_list; new folders for each db, each table is a file
+	case "":
+		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			Title:           "Save Exported Data",
+			DefaultFilename: "export.zip",
+			Filters: []runtime.FileFilter{
+				{DisplayName: "DB Export file (*.zip)", Pattern: "*.zip;"},
+			},
+		})
+		a.logger.Debug(fmt.Sprint(filePath, err))
+		// PRAGMA database_list; new folders for each db, each table is a file
+		// export all dbs as zip
+	}
 }
+
 func (a *App) uploadDB() {
 	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select data file to upload.",
@@ -106,7 +151,8 @@ func (a *App) uploadDB() {
 	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
 	dbName, ext := parseFile(selection)
 	a.logger.Debug(fmt.Sprintf("%s %s", dbName, ext))
-	var df *Dataframe
+	dfs := []Dataframe{}
+	tableNames := []string{}
 	file, err := os.ReadFile(selection)
 	if err != nil {
 		a.logger.Error(err.Error())
@@ -115,19 +161,53 @@ func (a *App) uploadDB() {
 	}
 	switch ext {
 	case ".json":
-		if err = json.Unmarshal(file, &df); err != nil {
+		var fileData any
+		if err = json.Unmarshal(file, &fileData); err != nil {
 			a.logger.Error(err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
 			return
 		}
-		a.logger.Debug("converting df", slog.Any("dataframe", df))
-		if err = df.convertToDB(a.db, dbName); err != nil {
-			a.logger.Error("Error converting to db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		switch data := fileData.(type) {
+		case map[string]any:
+			tables := []string{}
+			for tblName, tblData := range data {
+				tables = append(tables, tblName)
+				a.logger.Debug(fmt.Sprint(tblData))
+				if sliceData, ok := tblData.([]any); ok {
+					var finalDataframe []map[string]any
+					for _, item := range sliceData {
+						if rowMap, rowOk := item.(map[string]any); rowOk {
+							finalDataframe = append(finalDataframe, rowMap)
+						} else {
+							a.logger.Error("malformed json: array element is not an object", slog.Any("element", item))
+							runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json structure: expected array of objects"})
+							return
+						}
+					}
+					dfs = append(dfs, finalDataframe)
+
+				} else {
+					a.logger.Error("malformed json: expected array for table data", slog.Any("data_type", fmt.Sprintf("%T", tblData)))
+					runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json: table data not an array"})
+					return
+				}
+			}
+			tableNames = tables
+
+		case []any:
+			df := Dataframe{}
+			for _, el := range data {
+				if dfData, ok := el.(map[string]any); ok {
+					df = append(df, dfData)
+				}
+				dfs = append(dfs, df)
+				tableNames = append(tableNames, dbName)
+			}
+		default:
+			a.logger.Error("malformed json")
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json"})
 			return
 		}
-		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
-		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
 
 	case ".csv":
 		csvReader := csv.NewReader(bytes.NewReader(file))
@@ -155,41 +235,54 @@ func (a *App) uploadDB() {
 			data = append(data, rowData)
 		}
 
-		df = &data
-		if err = df.convertToDB(a.db, dbName); err != nil {
+		dfs = append(dfs, data)
+		tableNames = append(tableNames, dbName)
+	case ".sql":
+		dbPath := a.getDBPath(dbName)
+		db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
+		if err != nil {
 			a.logger.Error("Error converting to db: " + err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
 			return
 		}
-		a.logger.Debug("Data frame: %s", slog.Any("dataframe", df))
-		runtime.EventsEmit(a.ctx, "dbUploadSucceeded", map[string]any{})
-	case ".sql":
-		dbPath := a.getDBPath(dbName)
-		newDB, err := sqlx.Open("sqlite3", dbPath)
-		if err != nil {
+		defer db.Close()
+		if _, err = db.Exec(string(file)); err != nil {
 			a.logger.Error("Opening new db: " + err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
-			return
-		}
-		defer newDB.Close()
-		if _, err = newDB.Exec(string(file)); err != nil {
-			a.logger.Error("Opening new db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
-			return
-		}
-		attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
-		_, err = a.db.Exec(attachQuery)
-		if err != nil {
-			a.logger.Error("Executing build script: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Executing build script."})
-			return
-		}
-
-		_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
-		if err != nil {
-			a.logger.Error("adding to main db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "adding to main db."})
 			return
 		}
 	}
+
+	dbPath := a.getDBPath(dbName)
+	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
+	if err != nil {
+		a.logger.Error("Error converting to db: " + err.Error())
+		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		return
+	}
+	for i, df := range dfs {
+		if i < len(tableNames) {
+			if err := df.convertToSQLite(db, tableNames[i]); err != nil {
+				a.logger.Error("Error converting to db: " + err.Error())
+				runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+				return
+			}
+		}
+	}
+	db.Close()
+	attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
+	_, err = a.db.Exec(attachQuery)
+	if err != nil {
+		a.logger.Error("Error converting to db: " + err.Error())
+		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		return
+	}
+
+	_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
+	if err != nil {
+		a.logger.Error("Error converting to db: " + err.Error())
+		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		return
+	}
+	a.emit("dbUploadSucceeded", "DB uploaded successfully!")
 }

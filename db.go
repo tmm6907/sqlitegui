@@ -35,7 +35,6 @@ func (a *App) SetCurrentDB(name string) Result {
 func (a *App) GetCurrentDB() Result {
 	var dbName string
 	if err := a.db.Get(&dbName, "SELECT current_db from current_db where id=1;"); err != nil {
-		a.logger.Error(err.Error())
 		return a.newResult(
 			err,
 			nil,
@@ -105,7 +104,7 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 	a.logger.Debug(fmt.Sprintf("path: %s", dbPath))
 
 	if strings.ToLower(dbForm.Journal) == "wal" {
-		newDB, err := sqlx.Open("sqlite3", dbPath)
+		newDB, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 		if err != nil {
 			a.logger.Error(err.Error())
 			return a.newResult(

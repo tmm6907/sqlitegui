@@ -3,8 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -13,7 +11,7 @@ import (
 
 type Dataframe []map[string]any
 
-func goTypeToSQLite(t reflect.Type) string {
+func castToSQLiteType(t reflect.Type) string {
 	switch t.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return "INTEGER"
@@ -34,28 +32,10 @@ func goTypeToSQLite(t reflect.Type) string {
 	}
 }
 
-func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
+func (d Dataframe) convertToSQLite(db *sqlx.DB, tableName string) error {
 	if len(d) == 0 {
 		return fmt.Errorf("cannot convert empty Dataframe to database")
 	}
-
-	// --- 1. Setup DB Path and Connection (New File) ---
-	dataDir, err := os.UserConfigDir()
-	if err != nil {
-		return err
-	}
-	dbDir := filepath.Join(dataDir, "sqlitegui", "dbs")
-	if err := os.MkdirAll(dbDir, 0755); err != nil {
-		return err
-	}
-	dbPath := filepath.Join(dbDir, fmt.Sprintf("%s.db", name))
-
-	// Open the new, file-based SQLite database
-	newDB, err := sqlx.Open("sqlite3", dbPath)
-	if err != nil {
-		return err
-	}
-	defer newDB.Close() // Defer closing the new file DB connection
 
 	firstRow := d[0]
 	columnDefinitions := ""
@@ -66,7 +46,7 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 		if valueType == nil {
 			continue
 		}
-		sqliteType := goTypeToSQLite(valueType)
+		sqliteType := castToSQLiteType(valueType)
 		columnDefinitions += fmt.Sprintf("%s %s, ", colName, sqliteType)
 		columnNames = append(columnNames, colName)
 	}
@@ -76,16 +56,13 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 	}
 
 	columnDefinitions = strings.TrimSuffix(columnDefinitions, ", ")
-	tableName := name
 	createTableSQL := fmt.Sprintf("CREATE TABLE %s (%s)", tableName, columnDefinitions)
 
-	_, err = newDB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName))
-	if err != nil {
+	if _, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s;", tableName)); err != nil {
 		return fmt.Errorf("error dropping existing table: %w", err)
 	}
 
-	_, err = newDB.Exec(createTableSQL)
-	if err != nil {
+	if _, err := db.Exec(createTableSQL); err != nil {
 		return fmt.Errorf("error creating table: %w", err)
 	}
 
@@ -95,7 +72,7 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 		strings.Join(columnNames, ", "),
 		placeholders)
 
-	tx, err := newDB.Begin() // Start transaction on the NEW database
+	tx, err := db.Begin() // Start transaction on the NEW database
 	if err != nil {
 		return err
 	}
@@ -135,17 +112,6 @@ func (d Dataframe) convertToDB(db *sqlx.DB, name string) error {
 
 	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("error committing transaction: %w", err)
-	}
-
-	attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, name)
-	_, err = db.Exec(attachQuery)
-	if err != nil {
-		return fmt.Errorf("failed to attach database %s: %w", name, err)
-	}
-
-	_, err = db.Exec("INSERT into dbs (name, path) VALUES (?,?);", name, dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to record new DB metadata in db: %w", err)
 	}
 
 	return nil

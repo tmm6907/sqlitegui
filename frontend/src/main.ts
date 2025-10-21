@@ -12,6 +12,10 @@ const app = mount(App, {
   }
 });
 
+interface emitData {
+  msg: string
+}
+
 export function setupWailsEventsListeners() {
   EventsOn("dbAttached", () => {
     renderNavDataWithAlert("DB imported successfully!");
@@ -19,4 +23,12 @@ export function setupWailsEventsListeners() {
   EventsOn("dbAttachFailed", () => {
     renderNavDataWithAlert("DB failed to import!", "alert-error");
   });
+
+  EventsOn("dbUploadFailed", (data) => {
+    renderNavDataWithAlert(data.error, "alert-error")
+  })
+
+  EventsOn("dbUploadSucceeded", (data: emitData) => {
+    renderNavDataWithAlert(data.msg)
+  })
 }

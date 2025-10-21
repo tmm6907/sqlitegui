@@ -3,15 +3,19 @@ package main
 import (
 	"errors"
 	"fmt"
-	"sqlitegui/models"
 )
+
+type pragmaResult struct {
+	Seq  int    `db:"seq"`
+	Name string `db:"name"`
+	File string `db:"file"`
+}
 
 func (a *App) GetNavData() Result {
 	if a.db == nil {
 		a.logger.Error("FATAL: GetNavData called before database was initialized or after it failed to open.")
 		return a.newResult(errors.New("database not available"), nil)
 	}
-	a.attachDBs()
 
 	data := make(map[string][]string)
 	var mainTables []string
@@ -23,8 +27,9 @@ func (a *App) GetNavData() Result {
 		return a.newResult(err, nil)
 	}
 	data["main"] = mainTables
-	var otherDBS []models.DB
-	if err := a.db.Select(&otherDBS, "SELECT * FROM dbs;"); err != nil {
+
+	var otherDBS []pragmaResult
+	if err := a.db.Select(&otherDBS, "PRAGMA database_list;"); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 		return a.newResult(err, nil)
 	}

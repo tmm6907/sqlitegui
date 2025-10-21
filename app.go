@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 //go:embed build.sql
@@ -59,23 +60,26 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) attachDBs() error {
-	rows, err := a.db.Query("SELECT name, path from dbs;")
-	if err != nil {
+	type dbInfo struct {
+		Name string `db:"name"`
+		Path string `db:"path"`
+	}
+	var rows []dbInfo
+	if err := a.db.Select(&rows, "SELECT name, path from dbs;"); err != nil {
 		return err
 	}
-	for rows.Next() {
-		var path string
-		var name string
-		if err := rows.Scan(&name, &path); err != nil {
-			return err
-		}
-		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", path, name)
+	for _, row := range rows {
+		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, row.Name)
 		if _, err := a.db.Exec(attachQuery); err != nil {
-			a.logger.Debug(err.Error(), slog.String("filename", path))
+			a.logger.Debug(err.Error(), slog.String("filename", row.Path))
 			return err
 		}
-		a.logger.Debug(fmt.Sprintf("Attached %s successfully", name))
 	}
+	var otherDBS []pragmaResult
+	if err := a.db.Select(&otherDBS, "PRAGMA database_list;"); err != nil {
+		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
+	}
+	a.logger.Debug(fmt.Sprint(otherDBS))
 	return nil
 }
 
@@ -106,7 +110,7 @@ func (a *App) getDB() (*sqlx.DB, error) {
 	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
 		return nil, err
 	}
-	db, err := sqlx.Open("sqlite3", dbPath)
+	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("DB failed to open %s: %s", dbPath, err.Error())
 	}
@@ -162,4 +166,12 @@ func (a *App) newResult(err error, results any) Result {
 		ErrStr:  "",
 		Results: results,
 	}
+}
+
+func (a *App) emit(emitType string, emitMsg string) {
+	runtime.EventsEmit(
+		a.ctx,
+		emitType,
+		map[string]string{"msg": emitMsg},
+	)
 }
