@@ -30,7 +30,7 @@
     });
 
     async function selectAll(db: string, table: string) {
-        let query = `SELECT * FROM ${db}.${table};`;
+        let query = `SELECT * FROM ${db}.${table} LIMIT 50;`;
         loadingResultsStore.set(true);
         let res = await Query({ query: query, editable: true });
         loadingResultsStore.set(false);
@@ -276,68 +276,106 @@
     </div>
 </dialog>
 
-<nav
-    class="h-screen w-full bg-base-200 py-8 px-3 flex flex-col gap-2 text-base-content"
->
+<nav class="h-screen w-full bg-base-200 py-8 px-3 flex flex-col gap-2">
     <div class="flex items-center justify-between space-x-8">
         <div class="flex items-center space-x-2">
             <span>Schemas</span>
             <button
-                class="btn btn-xs"
+                class="btn btn-xs btn-ghost"
                 aria-label="refresh schemas"
                 onclick={refreshSchema}
                 ><i class="fa-solid fa-arrows-rotate self-center"></i></button
             >
         </div>
-        <button
-            class="flex space-x-2 items-center px-2 py-2 text-xs hover:bg-base-300 rounded"
-            onclick={openDB}
+        <button class="btn btn-sm btn-ghost" onclick={openDB}
             ><i class="fa-solid fa-plus"></i><span>New DB</span>
         </button>
     </div>
 
-    <ul class="menu menu-vertical">
+    <ul class="menu menu-vertical w-full">
         <li id="nav-item-list">
             {#if Object.keys(databases).length > 0}
+                <details open={"main" === openDBName} class="nav-menu-item">
+                    <summary
+                        class="truncate text-secondary"
+                        title={"main"}
+                        onclick={(e) => handleToggle(e, "main")}
+                        ><i class="fa-solid fa-database"></i>{"main"}</summary
+                    >
+                    <ul>
+                        {#if databases["main"]}
+                            {#each databases["main"] as tblName}
+                                <li>
+                                    <div class="flex space-x-1">
+                                        <i class="fa-solid fa-table"></i>
+                                        <span class="truncate" title={tblName}
+                                            >{tblName}
+                                        </span>
+                                        <button
+                                            class="btn btn-xs btn-ghost"
+                                            aria-label={`Edit ${tblName}`}
+                                            onclick={async () =>
+                                                await selectAll(
+                                                    databases["main"],
+                                                    tblName,
+                                                )}
+                                            ><i class="fa-solid fa-pencil"
+                                            ></i></button
+                                        >
+                                    </div>
+                                </li>
+                            {/each}
+                        {:else}
+                            <li>No tables found</li>
+                        {/if}
+                    </ul>
+                </details>
                 {#each Object.keys(databases) as dbName}
-                    <details open={dbName === openDBName} class="nav-menu-item">
-                        <summary
-                            class="truncate"
-                            title={dbName}
-                            onclick={(e) => handleToggle(e, dbName)}
-                            ><i class="fa-solid fa-database"
-                            ></i>{dbName}</summary
+                    {#if dbName !== "main"}
+                        <details
+                            open={dbName === openDBName}
+                            class="nav-menu-item"
                         >
-                        <ul>
-                            {#if databases[dbName]}
-                                {#each databases[dbName] as tblName}
-                                    <li>
-                                        <div class="flex space-x-1">
-                                            <i class="fa-solid fa-table"></i>
-                                            <span
-                                                class="truncate"
-                                                title={tblName}
-                                                >{tblName}
-                                            </span>
-                                            <button
-                                                class="btn btn-xs"
-                                                aria-label={`Edit ${tblName}`}
-                                                onclick={async () =>
-                                                    await selectAll(
-                                                        dbName,
-                                                        tblName,
-                                                    )}
-                                                ><i class="fa-solid fa-pencil"
-                                                ></i></button
-                                            >
-                                        </div>
-                                    </li>
-                                {/each}
-                            {:else}
-                                <li>No tables found</li>
-                            {/if}
-                        </ul>
-                    </details>
+                            <summary
+                                class="truncate"
+                                title={dbName}
+                                onclick={(e) => handleToggle(e, dbName)}
+                                ><i class="fa-solid fa-database"
+                                ></i>{dbName}</summary
+                            >
+                            <ul>
+                                {#if databases[dbName]}
+                                    {#each databases[dbName] as tblName}
+                                        <li>
+                                            <div class="flex space-x-1">
+                                                <i class="fa-solid fa-table"
+                                                ></i>
+                                                <span
+                                                    class="truncate"
+                                                    title={tblName}
+                                                    >{tblName}
+                                                </span>
+                                                <button
+                                                    class="btn btn-xs btn-ghost"
+                                                    aria-label={`Edit ${tblName}`}
+                                                    onclick={async () =>
+                                                        await selectAll(
+                                                            dbName,
+                                                            tblName,
+                                                        )}
+                                                    ><i
+                                                        class="fa-solid fa-pencil"
+                                                    ></i></button
+                                                >
+                                            </div>
+                                        </li>
+                                    {/each}
+                                {:else}
+                                    <li>No tables found</li>
+                                {/if}
+                            </ul>
+                        </details>
+                    {/if}
                 {/each}
             {:else}
                 <div class="flex justify-center">

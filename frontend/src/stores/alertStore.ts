@@ -38,7 +38,7 @@ export function triggerResultAlert(msg: string, type: string = "success", durati
     }, duration);
 }
 
-export async function renderNavDataWithResultAlert(msg, type = "success") {
+export async function renderNavDataWithResultAlert(msg: string, type = "success") {
     await renderNavData();
     triggerResultAlert(msg, type);
 }

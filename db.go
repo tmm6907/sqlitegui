@@ -158,7 +158,6 @@ func (a *App) UpdateDB(req UpdateRequest) Result {
 
 	switch v := req.ID.(type) {
 	case float64:
-
 		idValue = fmt.Sprintf("%v", int64(v))
 		escapedID = idValue
 	case string:

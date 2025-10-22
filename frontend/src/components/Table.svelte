@@ -1,11 +1,11 @@
 <script lang="ts">
     import ResultAlert from "./ResultAlert.svelte";
-    import { UpdateDB } from "../../wailsjs/go/main/App";
+    import { UpdateDB } from "../../wailsjs/go/main/App.js";
     import {
         queryResults,
         tableName,
         dbNameStore,
-    } from "../stores/resultsStore";
+    } from "../stores/resultsStore.ts";
     import { triggerResultAlert } from "src/stores/alertStore.ts";
     let rows = $state([]);
     let cols = $state([]);
@@ -67,14 +67,16 @@
             id="main-db"
             class="table table-sm table-pin-rows active text-lg w-full"
         >
-            <thead>
+            <thead class="text-center">
                 <tr>
                     {#each cols as col, i}
-                        <th>{i == 0 && hasPK ? `${col} ( pk )` : col}</th>
+                        <th class=""
+                            >{i == 0 && hasPK ? `${col} ( pk )` : col}</th
+                        >
                     {/each}
                 </tr>
             </thead>
-            <tbody>
+            <tbody class="text-center">
                 {#each rows as row, rowIndex}
                     <tr class="hover">
                         {#each row as item, colIndex}
@@ -83,7 +85,7 @@
                             {:else}
                                 <td>
                                     <input
-                                        class="input focus:input-accent"
+                                        class="input focus:input-accent text-center"
                                         type="text"
                                         onblur={async (e) =>
                                             handleEdit(

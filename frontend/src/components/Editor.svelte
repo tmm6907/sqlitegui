@@ -153,39 +153,37 @@
     onDestroy(() => document.removeEventListener("keydown", handleKeyDown));
 </script>
 
-<div class="flex space-x-8">
-    <div class="flex-2 flex flex-col space-x-2">
+<div class="flex space-x-8 h-full">
+    <div class="flex-2 flex flex-col space-y-2">
         <div class="flex justify-between items-center">
             <label for="sql-editor">Editor</label>
-            <button class="btn btn-xs" onclick={runQuery} title="F5"
+            <button class="btn btn-xs btn-neutral" onclick={runQuery} title="F5"
                 >Run Query<i class="fa-solid fa-play text-success"></i></button
             >
         </div>
         <div
             id="sql-editor"
-            class="h-[16rem] overflow-auto textarea textarea-accent"
+            class="h-full w-full overflow-auto textarea textarea-accent **:dark:caret-base-content"
         ></div>
     </div>
     <div class="{loadingResults ? '' : 'invisible'} flex place-items-center">
         <span class="loading loading-spinner loading-md"></span>
     </div>
-    <div class="flex-1 grid grid-cols-1 gap-1 grid-rows-[auto_1fr]">
-        <div class="flex flex-col gap-1">
-            <label for="recent-queries">Recent Queries</label>
-            <div class="outline rounded h-[16rem] overflow-auto">
-                <ul id="recent-queries">
-                    {#each queries as q, i}
-                        <ListItem
-                            identifier={i}
-                            text={q}
-                            clamp={2}
-                            action={() => {
-                                enterRecentQuery(i);
-                            }}
-                        />
-                    {/each}
-                </ul>
-            </div>
+    <div class="flex-1 flex flex-col space-y-2 grid-rows-[auto_1fr]">
+        <label for="recent-queries">Recent Queries</label>
+        <div class="outline rounded h-full overflow-auto">
+            <ul id="recent-queries" class="list">
+                {#each queries as q, i}
+                    <ListItem
+                        identifier={i}
+                        text={q}
+                        clamp={2}
+                        action={() => {
+                            enterRecentQuery(i);
+                        }}
+                    />
+                {/each}
+            </ul>
         </div>
     </div>
 </div>

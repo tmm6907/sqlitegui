@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,6 +26,23 @@ var (
 	// These invalid characters are replaced with a single underscore.
 	reInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
 )
+
+type ColumnInfo struct {
+	Name       string  `db:"name"`
+	Type       string  `db:"type"`
+	NotNull    bool    `db:"notnull"`
+	PK         int     `db:"pk"`
+	CID        string  `db:"cid"`
+	DFLT_value *string `db:"dflt_value"`
+}
+
+func generatePlaceholders(count int) string {
+	s := make([]string, count)
+	for i := range s {
+		s[i] = "?"
+	}
+	return strings.Join(s, ", ")
+}
 
 func determineFieldType(value string) any {
 	lowerValue := strings.ToLower(value)
@@ -52,6 +70,16 @@ func parseFile(selection string) (string, string) {
 	dbName := reInvalidChars.ReplaceAllString(sanitizedName, "_")
 	dbName = strings.ToLower(dbName)
 	return dbName, fileExt
+}
+
+func (a *App) getDBList() (*[]pragmaResult, error) {
+	var res []pragmaResult
+	if err := a.db.Select(&res, "PRAGMA database_list;"); err != nil {
+		a.logger.Error(err.Error())
+		runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+		return nil, err
+	}
+	return &res, nil
 }
 
 func (a *App) importDB() {
@@ -98,6 +126,159 @@ func (a *App) exportDB(format string) {
 		a.logger.Debug(fmt.Sprint(filePath, err))
 		// PRAGMA database_list; select * from each table and create new tables in main and export
 		// copy all tables into main db and export as .db
+		newDB, err := sqlx.Connect("sqlite3", filePath)
+		if err != nil {
+			a.logger.Error(err.Error())
+			runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+			return
+		}
+		defer newDB.Close()
+		var dbs []pragmaResult
+
+		if err := a.db.Select(&dbs, "PRAGMA database_list;"); err != nil {
+			a.logger.Error(err.Error())
+			runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+			return
+		}
+		for _, db := range dbs {
+			var tblNames []string
+			query := fmt.Sprintf("SELECT name from %s.sqlite_master where type='table';", db.Name)
+			if err := a.db.Select(&tblNames, query); err != nil {
+				a.logger.Error(err.Error())
+				runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+				return
+			}
+
+			for _, tblName := range tblNames {
+				var colInfos []ColumnInfo
+				if tblName == "dbs" {
+					continue
+				}
+				newName := fmt.Sprintf("%s_%s", db.Name, tblName)
+				if err := a.db.Select(&colInfos, fmt.Sprintf("PRAGMA %s.table_info(%s);", db.Name, tblName)); err != nil {
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+				if len(colInfos) == 0 {
+					a.logger.Info(fmt.Sprintf("Skipping table %s.%s: no column info.", db.Name, tblName))
+					continue
+				}
+
+				var columnDefs []string
+				var columnNames []string
+				for _, info := range colInfos {
+					columnNames = append(columnNames, info.Name)
+					def := fmt.Sprintf("%s %s", info.Name, info.Type)
+					if info.NotNull {
+						def += " NOT NULL"
+					}
+					if info.PK > 0 {
+						def += " PRIMARY KEY"
+					}
+					columnDefs = append(columnDefs, def)
+				}
+				createSQL := fmt.Sprintf("CREATE TABLE %s (%s);", newName, strings.Join(columnDefs, ", "))
+
+				placeholders := generatePlaceholders(len(columnNames))
+				insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", newName, strings.Join(columnNames, ", "), placeholders)
+
+				// C. Start Transaction on the NEW DB (Critical for Atomicity)
+				tx, err := newDB.Begin()
+				if err != nil {
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+
+				// D. Execute CREATE TABLE (DDL)
+				if _, err = tx.Exec(createSQL); err != nil {
+					tx.Rollback()
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+
+				// E. Prepare INSERT statement (DML)
+				stmt, err := tx.Prepare(insertSQL)
+				if err != nil {
+					tx.Rollback()
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+
+				// F. Retrieve Data from Source DB
+				rows, err := a.db.Queryx(fmt.Sprintf("SELECT * FROM %s.%s;", db.Name, tblName))
+				if err != nil {
+					tx.Rollback()
+					stmt.Close()
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+
+				// G. Loop data, Marshal complex types, and Execute Inserts
+				var rollbackErr error
+				for rows.Next() {
+					rowMap := make(map[string]any)
+					if err := rows.MapScan(rowMap); err != nil {
+						a.logger.Error(fmt.Sprintf("MapScan error on %s: %s", newName, err.Error()))
+						continue // Skip row if map scan fails
+					}
+
+					values := make([]any, len(columnNames))
+
+					for i, colName := range columnNames {
+						value := rowMap[colName]
+						v := reflect.ValueOf(value)
+
+						// Check if the value is a complex type (slice or map) that needs JSON serialization
+						if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Map) {
+							jsonBytes, marshalErr := json.Marshal(value)
+							if marshalErr != nil {
+								rollbackErr = marshalErr
+								break
+							}
+							values[i] = string(jsonBytes)
+						} else {
+							values[i] = value
+						}
+					}
+
+					if rollbackErr != nil {
+						break
+					}
+
+					// Execute the insert for the current row
+					if _, err = stmt.Exec(values...); err != nil {
+						rollbackErr = err
+						break
+					}
+				}
+
+				// H. Cleanup and Check for Errors
+				rows.Close()
+				stmt.Close()
+
+				if rollbackErr != nil {
+					tx.Rollback()
+					a.logger.Error("transaction failed")
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": "transaction failed"})
+					return
+				}
+
+				// I. Commit the Transaction for this table
+				if err = tx.Commit(); err != nil {
+					a.logger.Error(err.Error())
+					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					return
+				}
+				a.logger.Info(fmt.Sprintf("Successfully exported table: %s", newName))
+			}
+		}
+		a.logger.Info("db successfully exported")
+		runtime.EventsEmit(a.ctx, "dbExportSucceeded", map[string]any{"msg": "db successfully exported"})
 	case ".csv":
 		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 			Title:           "Save Exported Data",
@@ -229,7 +410,8 @@ func (a *App) uploadDB() {
 			rowData := make(map[string]any)
 			for i, name := range fieldNames {
 				if i < len(row) {
-					rowData[name] = determineFieldType(row[i])
+					cleanedName := cleanTableName(name)
+					rowData[cleanedName] = determineFieldType(row[i])
 				}
 			}
 			data = append(data, rowData)
@@ -249,8 +431,23 @@ func (a *App) uploadDB() {
 		if _, err = db.Exec(string(file)); err != nil {
 			a.logger.Error("Opening new db: " + err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
+		}
+		attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
+		_, err = a.db.Exec(attachQuery)
+		if err != nil {
+			a.logger.Error("Error converting to db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
 			return
 		}
+
+		_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
+		if err != nil {
+			a.logger.Error("Error converting to db: " + err.Error())
+			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+			return
+		}
+		a.emit("dbUploadSucceeded", "DB uploaded successfully!")
+		return
 	}
 
 	dbPath := a.getDBPath(dbName)

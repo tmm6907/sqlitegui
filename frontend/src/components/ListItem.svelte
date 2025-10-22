@@ -2,20 +2,17 @@
     let props = $props();
 </script>
 
-<li class="">
+<li class=" py-2 border-b-primary-content">
     <button
         id={`list-item-${props.identifier}`}
-        class="block w-full
-        border-b border-b-primary
-        hover:bg-accent-content
-        focus:bg-accent-content text-left"
+        class="btn btn-block btn-ghost text-left"
         tabindex="0"
         onclick={() => {
             props.action();
         }}
     >
         <span
-            class={`p-2 ${props.clamp !== undefined ? `line-clamp-${props.clamp}` : ""}`}
+            class={`w-full ${props.clamp !== undefined ? `line-clamp-${props.clamp}` : ""}`}
             title={props.text}>{props.text}</span
         >
     </button>

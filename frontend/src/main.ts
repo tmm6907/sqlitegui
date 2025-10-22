@@ -23,6 +23,12 @@ export function setupWailsEventsListeners() {
   EventsOn("dbAttachFailed", () => {
     renderNavDataWithAlert("DB failed to import!", "alert-error");
   });
+  EventsOn("dbExportFailed", (data) => {
+    renderNavDataWithAlert(data.error, "alert-error")
+  })
+  EventsOn("dbExportSucceeded", (data: emitData) => {
+    renderNavDataWithAlert(data.msg)
+  })
 
   EventsOn("dbUploadFailed", (data) => {
     renderNavDataWithAlert(data.error, "alert-error")
