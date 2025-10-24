@@ -10,6 +10,7 @@
         SetCurrentDB,
         GetCurrentDB,
         Query,
+        RemoveDB,
     } from "../../wailsjs/go/main/App.js";
     import { triggerAlert } from "src/stores/alertStore.ts";
     import {
@@ -116,6 +117,15 @@
             renderNavData();
         }
     };
+
+    async function removeDB(name: string) {
+        let res = await RemoveDB(name);
+        if (res.error !== "") {
+            triggerAlert(res.error, "alert-error");
+            return;
+        }
+        renderNavDataWithAlert(`Removed '${name}' successfully!`);
+    }
 
     // Show the modal on mount
     onMount(async () => {
@@ -292,62 +302,74 @@
         </button>
     </div>
 
-    <ul class="menu menu-vertical w-full">
-        <li id="nav-item-list">
+    <div class="">
+        <ul class="menu menu-vertical w-full">
             {#if Object.keys(databases).length > 0}
-                <details open={"main" === openDBName} class="nav-menu-item">
-                    <summary
-                        class="truncate text-secondary"
-                        title={"main"}
-                        onclick={(e) => handleToggle(e, "main")}
-                        ><i class="fa-solid fa-database"></i>{"main"}</summary
-                    >
-                    <ul>
-                        {#if databases["main"]}
-                            {#each databases["main"] as tblName}
-                                <li>
-                                    <div class="flex space-x-1">
-                                        <i class="fa-solid fa-table"></i>
-                                        <span class="truncate" title={tblName}
-                                            >{tblName}
-                                        </span>
-                                        <button
-                                            class="btn btn-xs btn-ghost"
-                                            aria-label={`Edit ${tblName}`}
-                                            onclick={async () =>
-                                                await selectAll(
-                                                    databases["main"],
-                                                    tblName,
-                                                )}
-                                            ><i class="fa-solid fa-pencil"
-                                            ></i></button
-                                        >
-                                    </div>
-                                </li>
-                            {/each}
-                        {:else}
-                            <li>No tables found</li>
-                        {/if}
-                    </ul>
-                </details>
-                {#each Object.keys(databases) as dbName}
-                    {#if dbName !== "main"}
+                <li>
+                    <details open={"main" === openDBName} class="">
+                        <summary
+                            class="truncate text-secondary"
+                            title={"main"}
+                            onclick={(e) => handleToggle(e, "main")}
+                            ><i class="fa-solid fa-database"></i><span
+                                >main</span
+                            ></summary
+                        >
+
+                        <ul>
+                            {#if databases["main"]}
+                                {#each databases["main"] as tblName}
+                                    <li>
+                                        <div class="grid">
+                                            <i class="fa-solid fa-table"></i>
+                                            <span
+                                                class="truncate"
+                                                title={tblName}
+                                                >{tblName}
+                                            </span>
+                                            <button
+                                                class="btn btn-xs btn-ghost"
+                                                aria-label={`Edit ${tblName}`}
+                                                onclick={async () =>
+                                                    await selectAll(
+                                                        databases["main"],
+                                                        tblName,
+                                                    )}
+                                                ><i class="fa-solid fa-pencil"
+                                                ></i></button
+                                            >
+                                        </div>
+                                    </li>
+                                {/each}
+                            {:else}
+                                <li>No tables found</li>
+                            {/if}
+                        </ul>
+                    </details>
+                </li>
+                {#each Object.keys(databases).filter((name) => name !== "main") as dbName}
+                    <li>
                         <details
                             open={dbName === openDBName}
-                            class="nav-menu-item"
+                            class="max-w-full"
                         >
                             <summary
-                                class="truncate"
                                 title={dbName}
                                 onclick={(e) => handleToggle(e, dbName)}
-                                ><i class="fa-solid fa-database"
-                                ></i>{dbName}</summary
+                                ><i class="fa-solid fa-database"></i><span
+                                    class="truncate">{dbName}</span
+                                ><button
+                                    class="btn btn-xs btn-ghost mr-4"
+                                    aria-label="Remove DB"
+                                    onclick={async () => await removeDB(dbName)}
+                                    ><i class="fa-solid fa-trash"></i></button
+                                ></summary
                             >
                             <ul>
                                 {#if databases[dbName]}
                                     {#each databases[dbName] as tblName}
                                         <li>
-                                            <div class="flex space-x-1">
+                                            <div class="grid w-full">
                                                 <i class="fa-solid fa-table"
                                                 ></i>
                                                 <span
@@ -375,17 +397,19 @@
                                 {/if}
                             </ul>
                         </details>
-                    {/if}
+                    </li>
                 {/each}
             {:else}
-                <div class="flex justify-center">
-                    <span class="loading loading-spinner loading-md mx-auto"
-                    ></span>
-                    <span>Loading Schema</span>
-                </div>
+                <li>
+                    <div class="flex justify-center">
+                        <span class="loading loading-spinner loading-md mx-auto"
+                        ></span>
+                        <span>Loading Schema</span>
+                    </div>
+                </li>
             {/if}
-        </li>
-    </ul>
+        </ul>
+    </div>
 </nav>
 
 <style>

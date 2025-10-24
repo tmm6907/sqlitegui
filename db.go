@@ -183,3 +183,20 @@ func (a *App) UpdateDB(req UpdateRequest) Result {
 	}
 	return a.newResult(nil, nil)
 }
+
+func (a *App) RemoveDB(dbName string) Result {
+	if dbName == "" {
+		a.logger.Error("invalid db name")
+		return a.newResult(errors.New("invalid db name"), map[string]any{"error": "invalid db name"})
+	}
+	if _, err := a.db.Exec("DELETE FROM main.dbs where name = ? ;", dbName); err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, map[string]any{"error": err.Error()})
+	}
+	query := fmt.Sprintf("DETACH DATABASE \"%s\";", dbName)
+	if _, err := a.db.Exec(query); err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, map[string]any{"error": err.Error()})
+	}
+	return a.newResult(nil, nil)
+}

@@ -7,6 +7,7 @@
         dbNameStore,
     } from "../stores/resultsStore.ts";
     import { triggerResultAlert } from "src/stores/alertStore.ts";
+    import { title } from "process";
     let rows = $state([]);
     let cols = $state([]);
     let hasPK = $state(false);
@@ -94,6 +95,7 @@
                                                 rowIndex,
                                                 colIndex,
                                             )}
+                                        title={item}
                                         value={item}
                                     />
                                 </td>

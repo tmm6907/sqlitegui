@@ -352,7 +352,7 @@ func (a *App) uploadDB() {
 		case map[string]any:
 			tables := []string{}
 			for tblName, tblData := range data {
-				tables = append(tables, tblName)
+				tables = append(tables, cleanTableName(tblName))
 				a.logger.Debug(fmt.Sprint(tblData))
 				if sliceData, ok := tblData.([]any); ok {
 					var finalDataframe []map[string]any

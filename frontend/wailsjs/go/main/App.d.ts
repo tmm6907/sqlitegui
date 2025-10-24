@@ -10,6 +10,8 @@ export function GetNavData():Promise<main.Result>;
 
 export function Query(arg1:main.QueryRequest):Promise<main.Result>;
 
+export function RemoveDB(arg1:string):Promise<main.Result>;
+
 export function SetCurrentDB(arg1:string):Promise<main.Result>;
 
 export function UpdateDB(arg1:main.UpdateRequest):Promise<main.Result>;

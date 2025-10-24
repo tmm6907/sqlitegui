@@ -34,6 +34,10 @@ func (a *App) GetNavData() Result {
 		return a.newResult(err, nil)
 	}
 
+	if len(otherDBS) == 0 {
+		return a.newResult(errors.New("no dbs attached"), nil)
+	}
+
 	for _, db := range otherDBS {
 		var tables []string
 		query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db.Name)
