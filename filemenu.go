@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,6 +26,7 @@ var (
 	// Regex 2: Finds any character that is NOT an alphanumeric character (a-z, A-Z, 0-9) or an underscore (_).
 	// These invalid characters are replaced with a single underscore.
 	reInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
+	dbFileTypes    = []string{".db", ".sqlite"}
 )
 
 type ColumnInfo struct {
@@ -72,14 +74,37 @@ func parseFile(selection string) (string, string) {
 	return dbName, fileExt
 }
 
-func (a *App) getDBList() (*[]pragmaResult, error) {
-	var res []pragmaResult
-	if err := a.db.Select(&res, "PRAGMA database_list;"); err != nil {
+func (a *App) openFolder() {
+	selection, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Open DB Folder",
+	})
+	if err != nil {
 		a.logger.Error(err.Error())
-		runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
-		return nil, err
+		return
 	}
-	return &res, nil
+	a.logger.Debug(selection)
+	db, err := sqlx.Open("sqlite3", fmt.Sprintf("%s:memory:", selection))
+
+	err = filepath.WalkDir(selection, func(path string, d os.DirEntry, err error) error {
+
+		if err != nil {
+			fmt.Printf("Error accessing path %q: %v\n", path, err)
+			return err // Stop the walk on error
+		}
+		if d.IsDir() {
+			fmt.Printf("DIR: %s\n", path)
+		} else {
+			bn := filepath.Base(path)
+			if slices.Contains(dbFileTypes, filepath.Ext(bn)) {
+				dbName, _ := parseFile(path)
+				a.logger.Debug(fmt.Sprint(dbName))
+			}
+		}
+
+		// 3. Return nil to continue the walk
+		return nil
+	})
+	a.logger.Debug(fmt.Sprint(db))
 }
 
 func (a *App) importDB() {
@@ -106,7 +131,7 @@ func (a *App) importDB() {
 		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
 	}
 
-	if _, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, selection); err != nil {
+	if _, err = a.db.Exec("INSERT into dbs (name, path, root) VALUES (?,?, ?);", dbName, selection, a.rootPath); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to add database %s: %v", dbName, err))
 		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
 	}
@@ -440,7 +465,7 @@ func (a *App) uploadDB() {
 			return
 		}
 
-		_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
+		_, err = a.db.Exec("INSERT into dbs (name, path, root) VALUES (?,?, ?);", dbName, dbPath, a.rootPath)
 		if err != nil {
 			a.logger.Error("Error converting to db: " + err.Error())
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
@@ -475,7 +500,7 @@ func (a *App) uploadDB() {
 		return
 	}
 
-	_, err = a.db.Exec("INSERT into dbs (name, path) VALUES (?,?);", dbName, dbPath)
+	_, err = a.db.Exec("INSERT into dbs (name, path, root) VALUES (?,?,?);", dbName, dbPath, a.rootPath)
 	if err != nil {
 		a.logger.Error("Error converting to db: " + err.Error())
 		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})

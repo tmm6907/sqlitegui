@@ -4,6 +4,7 @@
         navDataStore,
         renderNavDataWithAlert,
         renderNavData,
+        rootDBPathStore,
     } from "../stores/renderNav.ts";
     import {
         CreateDB,
@@ -26,9 +27,11 @@
 
     let databases = $state({});
 
-    navDataStore.subscribe((data) => {
-        databases = data.databases;
-    });
+    let rootPath = $state("");
+
+    navDataStore.subscribe((data) => (databases = data.databases));
+
+    rootDBPathStore.subscribe((val) => (rootPath = val));
 
     async function selectAll(db: string, table: string) {
         let query = `SELECT * FROM ${db}.${table} LIMIT 50;`;
@@ -347,6 +350,10 @@
                         </ul>
                     </details>
                 </li>
+                <div class="border-b mb-2"></div>
+                {#if rootPath !== "main"}
+                    <span class="italic truncate">{rootPath}</span>
+                {/if}
                 {#each Object.keys(databases).filter((name) => name !== "main") as dbName}
                     <li>
                         <details
@@ -400,13 +407,10 @@
                     </li>
                 {/each}
             {:else}
-                <li>
-                    <div class="flex justify-center">
-                        <span class="loading loading-spinner loading-md mx-auto"
-                        ></span>
-                        <span>Loading Schema</span>
-                    </div>
-                </li>
+                <div class="flex justify-center space-x-2">
+                    <span class="loading loading-spinner loading-md"></span>
+                    <span>Loading Schema</span>
+                </div>
             {/if}
         </ul>
     </div>

@@ -50,8 +50,11 @@ func main() {
 		AppMenu.Append(menu.EditMenu())
 	}
 	FileMenu := AppMenu.AddSubmenu("File")
-	FileMenu.AddText("Open", keys.CmdOrCtrl("O"), func(_ *menu.CallbackData) {
+	FileMenu.AddText("Import", keys.CmdOrCtrl("O"), func(_ *menu.CallbackData) {
 		app.importDB()
+	})
+	FileMenu.AddText("Open Folder...", keys.CmdOrCtrl("K"), func(_ *menu.CallbackData) {
+		app.openFolder()
 	})
 	FileMenu.AddSeparator()
 	FileMenu.AddText("Create new db from data file", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {

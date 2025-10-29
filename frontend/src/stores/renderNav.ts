@@ -5,6 +5,7 @@ import { GetNavData } from "../../wailsjs/go/main/App.js";
 export const navDataStore = writable({
     databases: {}
 });
+export const rootDBPathStore = writable("")
 
 export async function renderNavData() {
     let res = await GetNavData();

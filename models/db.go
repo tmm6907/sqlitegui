@@ -4,5 +4,6 @@ type DB struct {
 	ID         int    `db:"id"`
 	Name       string `db:"name"`
 	Path       string `db:"path"`
+	Root       string `db:"root"`
 	Created_At string `db:"created_at"`
 }

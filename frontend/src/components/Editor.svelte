@@ -21,6 +21,7 @@
     } from "../stores/resultsStore.ts";
     import { Query } from "../../wailsjs/go/main/App.js";
     import ListItem from "./ListItem.svelte";
+    import { nonpassive } from "svelte/legacy";
 
     let editorView: EditorView;
     let dbName = $state("");
@@ -131,6 +132,20 @@
             console.error("Parent element with id 'sql-editor' not found.");
             return;
         }
+        const myCustomTheme = EditorView.theme({
+            ".cm-activeLine": {
+                backgroundColor: "#3c3c3c",
+            },
+            ".cm-lineNumbers .cm-gutterElement": {
+                color: "#6d6d6d",
+            },
+            ".cm-scroller": {
+                overflow: "none",
+            },
+            ".cm-line": {
+                "text-wrap": "wrap",
+            },
+        });
 
         let startState = EditorState.create({
             doc: "",
@@ -139,6 +154,8 @@
                 history(),
                 keymap.of([...defaultKeymap, ...historyKeymap]),
                 syntaxHighlighting(customHighlightStyle),
+                myCustomTheme,
+                EditorView.lineWrapping,
             ],
         });
 
@@ -154,7 +171,7 @@
 </script>
 
 <div class="flex space-x-8 h-full">
-    <div class="flex-2 flex flex-col space-y-2">
+    <div class="w-2/3 flex flex-col space-y-2">
         <div class="flex justify-between items-center">
             <label for="sql-editor">Editor</label>
             <button class="btn btn-xs btn-neutral" onclick={runQuery} title="F5"
@@ -163,7 +180,7 @@
         </div>
         <div
             id="sql-editor"
-            class="h-full w-full overflow-auto textarea textarea-accent **:dark:caret-base-content"
+            class="h-full w-full textarea textarea-accent **:dark:caret-base-content"
         ></div>
     </div>
     <div class="{loadingResults ? '' : 'invisible'} flex place-items-center">

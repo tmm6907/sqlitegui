@@ -7,7 +7,6 @@
         dbNameStore,
     } from "../stores/resultsStore.ts";
     import { triggerResultAlert } from "src/stores/alertStore.ts";
-    import { title } from "process";
     let rows = $state([]);
     let cols = $state([]);
     let hasPK = $state(false);
@@ -51,7 +50,7 @@
     <div class="flex relative justify-between items-center">
         <span
             >Results{#if editable}
-                <span class="text-neutral-500 ml-2">(Editable)</span>
+                <span class="text-neutral-400 ml-2">(Editable)</span>
             {/if}</span
         >
         <ResultAlert />

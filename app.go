@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -17,12 +18,15 @@ import (
 //go:embed build.sql
 var buildScriptContent string
 
+var pkRegex = regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`)
+
 type App struct {
 	ctx      context.Context
 	db       *sqlx.DB
 	pkRegex  *regexp.Regexp
 	logger   *slog.Logger
 	unlocked bool
+	rootPath string
 }
 
 func NewApp(logger *slog.Logger, unlocked bool) *App {
@@ -34,32 +38,31 @@ func NewApp(logger *slog.Logger, unlocked bool) *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	db, err := a.getDB()
-	if err != nil {
+	dbPath := a.getDBPath("main")
+	// 3. Ensure the subdirectory exists (optional, but good practice)
+	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
 		a.logger.Error(err.Error())
 		return
 	}
-	if db == nil {
-		a.logger.Error("failed to create db")
+	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
+	if err != nil {
+		a.logger.Error(fmt.Sprintf("DB failed to open %s: %s", dbPath, err.Error()))
 		return
 	}
-	a.db = db
+	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
+		a.logger.Error(fmt.Sprintf("unable to configure db: %s", err.Error()))
+		return
+	}
 
-	if _, err := a.db.Exec(buildScriptContent); err != nil {
+	if _, err := db.Exec(buildScriptContent); err != nil {
 		a.logger.Error("unable to run build script for db: %s", slog.Any("error", err))
 		return
 	}
-
-	if err := a.attachDBs(); err != nil {
-		a.logger.Error(fmt.Sprintf("unable to attach dbs: %s", err.Error()))
-		return
-	}
-
-	a.pkRegex = regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`)
+	a.db = db
 	a.logger.Info("starting app")
 }
 
-func (a *App) attachDBs() error {
+func (a *App) attachMainDBs() error {
 	type dbInfo struct {
 		Name string `db:"name"`
 		Path string `db:"path"`
@@ -69,7 +72,9 @@ func (a *App) attachDBs() error {
 		return err
 	}
 	for _, row := range rows {
-		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, row.Name)
+		relBase := filepath.Base(a.rootPath)
+		modifiedName := strings.Join([]string{relBase, row.Name}, "_")
+		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, modifiedName)
 		if _, err := a.db.Exec(attachQuery); err != nil {
 			a.logger.Debug(err.Error(), slog.String("filename", row.Path))
 			return err
@@ -102,28 +107,8 @@ func (a *App) getDBPath(db_name string) string {
 	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", db_name))
 }
 
-func (a *App) getDB() (*sqlx.DB, error) {
-
-	// 2. Combine with a subdirectory for your app and the db filename
-	dbPath := a.getDBPath("main")
-	// 3. Ensure the subdirectory exists (optional, but good practice)
-	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
-		return nil, err
-	}
-	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("DB failed to open %s: %s", dbPath, err.Error())
-	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
-		return nil, fmt.Errorf("unable to configure db: %s", err.Error())
-	}
-
-	return db, nil
-
-}
-
 func (a *App) findPK(query string) []string {
-	found := a.pkRegex.FindStringSubmatch(query)
+	found := pkRegex.FindStringSubmatch(query)
 	if len(found) <= 1 {
 		return []string{}
 	}
@@ -174,4 +159,8 @@ func (a *App) emit(emitType string, emitMsg string) {
 		emitType,
 		map[string]string{"msg": emitMsg},
 	)
+}
+
+func (a *App) GetRootPath() Result {
+	return a.newResult(nil, map[string]any{"root": a.rootPath})
 }

@@ -34,6 +34,12 @@ func (a *App) SetCurrentDB(name string) Result {
 
 func (a *App) GetCurrentDB() Result {
 	var dbName string
+	if a.db == nil {
+		return a.newResult(
+			errors.New("db not initialized"),
+			nil,
+		)
+	}
 	if err := a.db.Get(&dbName, "SELECT current_db from current_db where id=1;"); err != nil {
 		return a.newResult(
 			err,
@@ -93,7 +99,7 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 		)
 	}
 
-	if _, err := a.db.Exec("INSERT INTO dbs (name, path) VALUES (?,?);", dbForm.Name, dbPath); err != nil {
+	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root) VALUES (?,?,?);", dbForm.Name, dbPath, a.rootPath); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(
 			err,
@@ -125,8 +131,10 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 			)
 		}
 	}
-
-	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, dbForm.Name)
+	relBase := filepath.Base(a.rootPath)
+	modifiedName := strings.Join([]string{relBase, dbForm.Name}, "_")
+	a.logger.Debug(modifiedName)
+	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, modifiedName)
 	if _, err := a.db.Exec(attachQuery); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(

@@ -14,6 +14,14 @@ export function GetNavData() {
   return window['go']['main']['App']['GetNavData']();
 }
 
+export function GetRootPath() {
+  return window['go']['main']['App']['GetRootPath']();
+}
+
+export function OpenFolderOnStart() {
+  return window['go']['main']['App']['OpenFolderOnStart']();
+}
+
 export function Query(arg1) {
   return window['go']['main']['App']['Query'](arg1);
 }
@@ -24,6 +32,10 @@ export function RemoveDB(arg1) {
 
 export function SetCurrentDB(arg1) {
   return window['go']['main']['App']['SetCurrentDB'](arg1);
+}
+
+export function SetupMain() {
+  return window['go']['main']['App']['SetupMain']();
 }
 
 export function UpdateDB(arg1) {

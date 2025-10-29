@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"sqlitegui/models"
 )
 
 type pragmaResult struct {
@@ -27,26 +28,38 @@ func (a *App) GetNavData() Result {
 		return a.newResult(err, nil)
 	}
 	data["main"] = mainTables
+	a.logger.Debug(fmt.Sprintf("Main Data:, %v", data))
 
-	var otherDBS []pragmaResult
-	if err := a.db.Select(&otherDBS, "PRAGMA database_list;"); err != nil {
+	var otherDBS []models.DB
+	if err := a.db.Select(&otherDBS, "SELECT * from main.dbs WHERE root = ?", a.rootPath); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 		return a.newResult(err, nil)
 	}
-
-	if len(otherDBS) == 0 {
-		return a.newResult(errors.New("no dbs attached"), nil)
+	dbNames := make([]string, len(otherDBS))
+	a.logger.Debug(fmt.Sprint(otherDBS))
+	for i, db := range otherDBS {
+		var dbName string
+		query := fmt.Sprintf("SELECT name FROM pragma_database_list WHERE file = '%s' LIMIT 1;", db.Path)
+		a.logger.Debug(query)
+		a.db.Get(&dbName, query)
+		if dbName != "" {
+			dbNames[i] = dbName
+		}
 	}
+	a.logger.Debug(fmt.Sprint(dbNames))
 
-	for _, db := range otherDBS {
+	for i, db := range dbNames {
 		var tables []string
-		query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db.Name)
+		query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db)
+		a.logger.Debug(query)
 		if err := a.db.Select(&tables, query); err != nil {
 			a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 			return a.newResult(err, nil)
 		}
-		data[db.Name] = tables
+		data[otherDBS[i].Name] = tables
 	}
+
+	a.logger.Debug(fmt.Sprintf("All Data:, %v", data))
 
 	// FIX 4: Return the successful result payload directly
 	return a.newResult(
