@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -72,9 +71,8 @@ func (a *App) attachMainDBs() error {
 		return err
 	}
 	for _, row := range rows {
-		relBase := filepath.Base(a.rootPath)
-		modifiedName := strings.Join([]string{relBase, row.Name}, "_")
-		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, modifiedName)
+
+		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, row.Name)
 		if _, err := a.db.Exec(attachQuery); err != nil {
 			a.logger.Debug(err.Error(), slog.String("filename", row.Path))
 			return err

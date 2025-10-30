@@ -19,36 +19,41 @@ func (a *App) SetCurrentDB(name string) Result {
 			nil,
 		)
 	}
-	if _, err := a.db.Exec("UPDATE current_db SET current_db = ? WHERE id = 1;", name); err != nil {
+	if _, err := a.db.Exec(
+		`INSERT INTO main.current_db (id, current_db)
+		VALUES (1, ?)
+		ON CONFLICT (id) DO UPDATE SET current_db = excluded.current_db;`,
+		name,
+	); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(
 			err,
 			nil,
 		)
 	}
+	a.logger.Debug(fmt.Sprintf("Set db to %s", name))
 	return a.newResult(
 		nil,
-		nil,
+		map[string]string{"name": name},
 	)
 }
 
-func (a *App) GetCurrentDB() Result {
+func (a *App) getCurrentDB() (string, error) {
 	var dbName string
 	if a.db == nil {
-		return a.newResult(
-			errors.New("db not initialized"),
-			nil,
-		)
+		return "", errors.New("now db found")
 	}
-	if err := a.db.Get(&dbName, "SELECT current_db from current_db where id=1;"); err != nil {
-		return a.newResult(
-			err,
-			nil,
-		)
+	if err := a.db.Get(&dbName, "SELECT current_db from main.current_db where id=1;"); err != nil {
+		return "", err
 	}
+	return dbName, nil
+}
+
+func (a *App) GetCurrentDB() Result {
+	name, err := a.getCurrentDB()
 	return a.newResult(
-		nil,
-		dbName,
+		err,
+		name,
 	)
 }
 
@@ -99,7 +104,7 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 		)
 	}
 
-	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root, app_created) VALUES (?,?,?, ?);", dbForm.Name, dbPath, a.rootPath, true); err != nil {
+	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbForm.Name, dbPath, a.rootPath, true); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(
 			err,
@@ -131,10 +136,8 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 			)
 		}
 	}
-	relBase := filepath.Base(a.rootPath)
-	modifiedName := strings.Join([]string{relBase, dbForm.Name}, "_")
-	a.logger.Debug(modifiedName)
-	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, modifiedName)
+
+	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, dbForm.Name)
 	if _, err := a.db.Exec(attachQuery); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(

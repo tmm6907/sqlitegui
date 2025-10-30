@@ -9,6 +9,7 @@ import (
 )
 
 func (a *App) handleSelectQueries(query string, editable bool) Result {
+	a.logger.Debug(query)
 	rows, err := a.db.Query(query)
 	if err != nil {
 		a.logger.Error("failed to run query: %s", slog.Any("error", err.Error()))
@@ -138,4 +139,18 @@ func (a *App) Query(q QueryRequest) Result {
 			},
 		)
 	}
+}
+
+func (a *App) QueryAll(table string) Result {
+	dbName, err := a.getCurrentDB()
+	if err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, nil)
+	}
+	if dbName == "" {
+		return a.newResult(errors.New("unable to determine current db"), nil)
+	}
+
+	query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 50;", dbName, table)
+	return a.handleSelectQueries(query, true)
 }

@@ -11,8 +11,8 @@
         CreateDB,
         SetCurrentDB,
         GetCurrentDB,
-        Query,
         RemoveDB,
+        QueryAll,
     } from "../../wailsjs/go/main/App.js";
     import { triggerAlert } from "src/stores/alertStore.ts";
     import {
@@ -35,15 +35,16 @@
 
     rootDBPathStore.subscribe((val) => (rootPath = val));
 
-    async function selectAll(db: string, table: string) {
-        let query = `SELECT * FROM ${db}.${table} LIMIT 50;`;
+    async function selectAll(table: string) {
         loadingResultsStore.set(true);
-        let res = await Query({ query: query, editable: true });
+        let res = await QueryAll(table);
         loadingResultsStore.set(false);
+        console.log(res);
         if (res.error) {
             console.error(res.error);
         }
         let results = res.results;
+        console.log("results", results);
         queryResults.set({
             pk: results.pk,
             cols: results.cols,
@@ -102,14 +103,16 @@
         }
 
         openDBName = dbName;
+        console.log("setting");
 
         let res = await SetCurrentDB(openDBName);
 
-        if (res.error !== "") {
+        if (res.error) {
             console.error(res.error);
             triggerAlert(res.error, "alert-error");
             openDBName = "";
         } else {
+            console.log(res);
             dbNameStore.set(openDBName);
         }
     }
@@ -344,10 +347,7 @@
                                             class="btn btn-xs btn-ghost"
                                             aria-label={`Edit ${tblName}`}
                                             onclick={async () =>
-                                                await selectAll(
-                                                    "main",
-                                                    tblName,
-                                                )}
+                                                await selectAll(tblName)}
                                             ><i class="fa-solid fa-pencil"
                                             ></i></button
                                         >
@@ -402,10 +402,7 @@
                                                 class="btn btn-xs btn-ghost"
                                                 aria-label={`Edit ${tblName}`}
                                                 onclick={async () =>
-                                                    await selectAll(
-                                                        db[0],
-                                                        tblName,
-                                                    )}
+                                                    await selectAll(tblName)}
                                                 ><i class="fa-solid fa-pencil"
                                                 ></i></button
                                             >

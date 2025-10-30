@@ -11,9 +11,14 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-func (a *App) SetupMain() {
+func (a *App) SetupMain() Result {
 	a.rootPath = "main"
-	a.attachMainDBs()
+	err := a.attachMainDBs()
+	if err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, nil)
+	}
+	return a.newResult(nil, nil)
 }
 
 func (a *App) OpenFolderOnStart() Result {
@@ -24,9 +29,13 @@ func (a *App) OpenFolderOnStart() Result {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil)
 	}
-	a.logger.Debug(selection)
 	a.rootPath = selection
 
+	err = a.attachMainDBs()
+	if err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, nil)
+	}
 	err = a.addFolderDBs(selection)
 	if err != nil {
 		a.logger.Error(err.Error())
@@ -69,7 +78,7 @@ func (a *App) addFolderDBs(rootPath string) error {
 
 			if err := a.attachFolderDB(path, safeAlias, rootPath); err != nil {
 				a.logger.Error(fmt.Sprintf("Failed to attach and persist DB %s: %v", path, err))
-				return err
+				return nil
 			}
 		}
 

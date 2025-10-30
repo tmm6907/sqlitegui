@@ -44,21 +44,14 @@ func (a *App) GetNavData() Result {
 		if dbName != "" {
 			dbNames[i] = dbName
 		}
-	}
-	a.logger.Debug(fmt.Sprint(dbNames))
-
-	for i, db := range dbNames {
 		var tables []string
-		if db == "" {
-			continue
-		}
-		query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db)
-		a.logger.Debug(query)
+		query = fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db.Name)
+		a.logger.Debug(fmt.Sprintf("%s %s", query, dbName))
 		if err := a.db.Select(&tables, query); err != nil {
 			a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 			return a.newResult(err, nil)
 		}
-		data[otherDBS[i].Name] = DBResult{tables, otherDBS[i].App_Created}
+		data[db.Name] = DBResult{tables, db.App_Created}
 	}
 
 	a.logger.Debug(fmt.Sprintf("All Data:, %v", data))

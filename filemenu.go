@@ -133,6 +133,7 @@ func (a *App) importDB() {
 
 	if _, err = a.db.Exec("INSERT into dbs (name, path, root) VALUES (?,?,?);", dbName, selection, a.rootPath); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to add database %s: %v", dbName, err))
+		a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
 		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
 	}
 	runtime.EventsEmit(a.ctx, "dbAttached", dbName)
@@ -468,6 +469,7 @@ func (a *App) uploadDB() {
 		_, err = a.db.Exec("INSERT into dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbName, dbPath, a.rootPath, true)
 		if err != nil {
 			a.logger.Error("Error converting to db: " + err.Error())
+			a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
 			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
 			return
 		}
@@ -503,6 +505,7 @@ func (a *App) uploadDB() {
 	_, err = a.db.Exec("INSERT into dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbName, dbPath, a.rootPath, true)
 	if err != nil {
 		a.logger.Error("Error converting to db: " + err.Error())
+		a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
 		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
 		return
 	}

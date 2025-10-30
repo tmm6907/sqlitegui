@@ -26,6 +26,10 @@ export function Query(arg1) {
   return window['go']['main']['App']['Query'](arg1);
 }
 
+export function QueryAll(arg1) {
+  return window['go']['main']['App']['QueryAll'](arg1);
+}
+
 export function RemoveDB(arg1) {
   return window['go']['main']['App']['RemoveDB'](arg1);
 }
