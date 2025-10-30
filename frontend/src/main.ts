@@ -17,24 +17,24 @@ interface emitData {
 }
 
 export function setupWailsEventsListeners() {
-  EventsOn("dbAttached", () => {
-    renderNavDataWithAlert("DB imported successfully!");
+  EventsOn("dbAttached", async () => {
+    await renderNavDataWithAlert("DB imported successfully!");
   });
-  EventsOn("dbAttachFailed", () => {
-    renderNavDataWithAlert("DB failed to import!", "alert-error");
+  EventsOn("dbAttachFailed", async () => {
+    await renderNavDataWithAlert("DB failed to import!", "alert-error");
   });
-  EventsOn("dbExportFailed", (data) => {
-    renderNavDataWithAlert(data.error, "alert-error")
+  EventsOn("dbExportFailed", async (data) => {
+    await renderNavDataWithAlert(data.error, "alert-error")
   })
-  EventsOn("dbExportSucceeded", (data: emitData) => {
-    renderNavDataWithAlert(data.msg)
+  EventsOn("dbExportSucceeded", async (data: emitData) => {
+    await renderNavDataWithAlert(data.msg)
   })
 
-  EventsOn("dbUploadFailed", (data) => {
-    renderNavDataWithAlert(data.error, "alert-error")
+  EventsOn("dbUploadFailed", async (data) => {
+    await renderNavDataWithAlert(data.error, "alert-error")
   })
 
-  EventsOn("dbUploadSucceeded", (data: emitData) => {
-    renderNavDataWithAlert(data.msg)
+  EventsOn("dbUploadSucceeded", async (data: emitData) => {
+    await renderNavDataWithAlert(data.msg)
   })
 }

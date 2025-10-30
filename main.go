@@ -21,7 +21,12 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const SQLITE_DRIVER = "sqlite3"
+const (
+	APP_NAME      = "SQLite GUI"
+	SQLITE_DRIVER = "sqlite3"
+	SCREEN_WIDTH  = 1920
+	SCREEN_HEIGHT = 1080
+)
 
 func NewSLogger() *slog.Logger {
 	// Configure the handler options
@@ -50,7 +55,10 @@ func main() {
 		AppMenu.Append(menu.EditMenu())
 	}
 	FileMenu := AppMenu.AddSubmenu("File")
-	FileMenu.AddText("Import", keys.CmdOrCtrl("O"), func(_ *menu.CallbackData) {
+	FileMenu.AddText("New Window", keys.CmdOrCtrl("n"), func(cd *menu.CallbackData) {
+
+	})
+	FileMenu.AddText("Import", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
 		app.importDB()
 	})
 	FileMenu.AddText("Open Folder...", keys.CmdOrCtrl("K"), func(_ *menu.CallbackData) {
@@ -91,13 +99,12 @@ func main() {
 	FileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
 		rt.Quit(app.ctx)
 	})
-	programName := "SQLite GUI"
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  programName,
-		Width:  1920,
-		Height: 1080,
+		Title:  APP_NAME,
+		Width:  SCREEN_WIDTH,
+		Height: SCREEN_HEIGHT,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -110,7 +117,7 @@ func main() {
 		},
 		Menu: AppMenu,
 		Linux: &linux.Options{
-			ProgramName: programName,
+			ProgramName: APP_NAME,
 		},
 		Windows: &windows.Options{
 			Theme: windows.Dark,

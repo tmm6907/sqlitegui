@@ -99,7 +99,7 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 		)
 	}
 
-	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root) VALUES (?,?,?);", dbForm.Name, dbPath, a.rootPath); err != nil {
+	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root, app_created) VALUES (?,?,?, ?);", dbForm.Name, dbPath, a.rootPath, true); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(
 			err,
@@ -197,14 +197,27 @@ func (a *App) RemoveDB(dbName string) Result {
 		a.logger.Error("invalid db name")
 		return a.newResult(errors.New("invalid db name"), map[string]any{"error": "invalid db name"})
 	}
+	type SQLResult struct {
+		Name string `db:"name"`
+		File string `db:"file"`
+	}
+	var sqlResult SQLResult
+	if err := a.db.Get(&sqlResult, "SELECT dbs.name, dbs.file FROM pragma_database_list dbs JOIN main.dbs mdbs ON dbs.file = mdbs.path WHERE mdbs.name = ?", dbName); err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, nil)
+	}
 	if _, err := a.db.Exec("DELETE FROM main.dbs where name = ? ;", dbName); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]any{"error": err.Error()})
 	}
-	query := fmt.Sprintf("DETACH DATABASE \"%s\";", dbName)
+	query := fmt.Sprintf("DETACH DATABASE \"%s\";", sqlResult.Name)
 	if _, err := a.db.Exec(query); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]any{"error": err.Error()})
+	}
+	if err := os.Remove(sqlResult.File); err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, nil)
 	}
 	return a.newResult(nil, nil)
 }

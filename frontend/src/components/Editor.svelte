@@ -38,6 +38,7 @@
 
     async function handleKeyDown(ev: KeyboardEvent) {
         if (
+            ev.key &&
             ev.key.startsWith("F") &&
             ev.key.length >= 2 &&
             ev.key.length <= 3

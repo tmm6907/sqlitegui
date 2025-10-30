@@ -18,18 +18,17 @@ func (a *App) GetNavData() Result {
 		return a.newResult(errors.New("database not available"), nil)
 	}
 
-	data := make(map[string][]string)
+	data := make(map[string]DBResult)
 	var mainTables []string
 
-	if err := a.db.Select(&mainTables, "SELECT name FROM sqlite_master WHERE type='table' AND name!='dbs';"); err != nil {
+	if err := a.db.Select(&mainTables, "SELECT name FROM main.sqlite_master WHERE type='table' AND name!='dbs';"); err != nil {
 
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 
 		return a.newResult(err, nil)
 	}
-	data["main"] = mainTables
+	data["main"] = DBResult{mainTables, false}
 	a.logger.Debug(fmt.Sprintf("Main Data:, %v", data))
-
 	var otherDBS []models.DB
 	if err := a.db.Select(&otherDBS, "SELECT * from main.dbs WHERE root = ?", a.rootPath); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
@@ -50,13 +49,16 @@ func (a *App) GetNavData() Result {
 
 	for i, db := range dbNames {
 		var tables []string
+		if db == "" {
+			continue
+		}
 		query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db)
 		a.logger.Debug(query)
 		if err := a.db.Select(&tables, query); err != nil {
 			a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 			return a.newResult(err, nil)
 		}
-		data[otherDBS[i].Name] = tables
+		data[otherDBS[i].Name] = DBResult{tables, otherDBS[i].App_Created}
 	}
 
 	a.logger.Debug(fmt.Sprintf("All Data:, %v", data))

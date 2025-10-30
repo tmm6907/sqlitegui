@@ -12,3 +12,8 @@ type ImportRequest struct {
 	Name string `json:"name"`
 	Data string `json:"data"`
 }
+
+type DBResult struct {
+	Tables      []string `json:"tables"`
+	App_Created bool     `json:"app_created"`
+}

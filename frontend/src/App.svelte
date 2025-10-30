@@ -11,6 +11,7 @@
     SetupMain,
   } from "../wailsjs/go/main/App.js";
   import { rootDBPathStore } from "./stores/renderNav.ts";
+  import MessageDialogue from "./components/MessageDialogue.svelte";
   setupWailsEventsListeners();
   let rootPath = $state("");
   rootDBPathStore.subscribe((val) => (rootPath = val));
@@ -34,8 +35,9 @@
   });
 </script>
 
-<div class="flex h-screen">
+<div class="flex h-screen relative">
   <Alert />
+  <MessageDialogue />
   {#if rootPath == ""}
     <div class="flex flex-col space-y-16 flex-1 justify-center items-center">
       <h1 class="text-6xl">SQLite GUI</h1>
