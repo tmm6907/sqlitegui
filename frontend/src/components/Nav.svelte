@@ -1,57 +1,32 @@
 <script lang="ts">
     import { onDestroy, onMount } from "svelte";
     import {
-        navDataStore,
-        renderNavDataWithAlert,
-        renderNavData,
-        rootDBPathStore,
-        type NavDatabases,
-    } from "../stores/renderNav.ts";
-    import {
         CreateDB,
         SetCurrentDB,
         GetCurrentDB,
         RemoveDB,
         QueryAll,
     } from "../../wailsjs/go/main/App.js";
-    import { triggerAlert } from "src/stores/alertStore.ts";
+    import { appState } from "src/stores/appState.svelte.ts";
     import {
-        queryResults,
-        tableName,
-        dbNameStore,
-        loadingResultsStore,
-    } from "../stores/resultsStore.ts";
-    import { msgDialogueStore } from "src/stores/dialogueStore.ts";
+        renderNav,
+        renderNavWithAlert,
+        setDialogMsg,
+        setQueryResults,
+        triggerAlert,
+    } from "src/utils/utils.ts";
 
     var modal: HTMLDialogElement;
-
-    let openDBName = $state("");
-
-    let databases: NavDatabases = $state({});
-
-    let rootPath = $state("");
-
-    navDataStore.subscribe((data) => (databases = data.databases));
-
-    rootDBPathStore.subscribe((val) => (rootPath = val));
-
     async function selectAll(table: string) {
-        loadingResultsStore.set(true);
+        appState.loadingQueryResults = true;
         let res = await QueryAll(table);
-        loadingResultsStore.set(false);
+        appState.loadingQueryResults = false;
         console.log(res);
         if (res.error) {
             console.error(res.error);
         }
-        let results = res.results;
-        console.log("results", results);
-        queryResults.set({
-            pk: results.pk,
-            cols: results.cols,
-            rows: results.rows,
-            editable: true,
-        });
-        tableName.set(table);
+        setQueryResults(res.results);
+        appState.selectedTable = table;
     }
 
     function openDB() {
@@ -60,73 +35,51 @@
         }
     }
 
-    async function createDB(form: HTMLFormElement) {
-        var getRadioValue = (name: string) => {
-            const selectedOption: HTMLInputElement = form.querySelector(
-                `input[name='${name}']:checked`,
-            );
-            return selectedOption ? selectedOption.value : "";
-        };
-        const nameInput: HTMLInputElement =
-            form.querySelector("input[name='name']");
-        const cache = getRadioValue("cache");
-        const journal = getRadioValue("journal");
-        const sync = getRadioValue("sync");
-        const lock = getRadioValue("lock");
-        var formData = {
-            name: nameInput.value,
-            cache: cache,
-            journal: journal,
-            sync: sync,
-            lock: lock,
-        };
-        let res = await CreateDB(formData);
-        if (res.error !== "") {
+    async function createDB(e: SubmitEvent) {
+        e.preventDefault();
+        const form = e.target as HTMLFormElement;
+        const formData = new FormData(form);
+        let data = Object.fromEntries(formData.entries());
+        console.log(data);
+        let res = await CreateDB(data);
+        if (res.error) {
             console.error(res.error);
-            triggerAlert("DB failed to be created!", "alert-error");
-        } else {
-            modal.close();
-            await renderNavDataWithAlert("DB created successfully!");
+            triggerAlert("DB failed to be created!", "error");
+            return;
         }
+        modal.close();
+        await renderNavWithAlert("DB created successfully!");
     }
     async function refreshSchema() {
-        navDataStore.set({ databases: {} });
-        await renderNavDataWithAlert("Schema refreshed successfully!");
+        appState.navData = {};
+        await renderNavWithAlert("Schema refreshed successfully!");
     }
 
     async function handleToggle(e: MouseEvent, dbName: string) {
         e.preventDefault();
-        if (openDBName === dbName) {
-            openDBName = ""; // Sets 'open' property to false on the current element
-            dbNameStore.set("");
+        if (appState.currentDB === dbName) {
+            appState.currentDB = "";
             return;
         }
+        appState.currentDB = dbName;
 
-        openDBName = dbName;
-        console.log("setting");
-
-        let res = await SetCurrentDB(openDBName);
+        let res = await SetCurrentDB(appState.currentDB);
 
         if (res.error) {
             console.error(res.error);
-            triggerAlert(res.error, "alert-error");
-            openDBName = "";
-        } else {
-            console.log(res);
-            dbNameStore.set(openDBName);
+            triggerAlert(res.error, "error");
+            appState.currentDB = "";
         }
     }
 
-    const handleSubmit = (e: SubmitEvent) => {
+    const handleSubmit = async (e: SubmitEvent) => {
         if (e.target instanceof HTMLFormElement && e.target.id === "db-form") {
-            e.preventDefault();
-            createDB(e.target);
-            renderNavData();
+            await createDB(e);
         }
     };
 
     async function removeDB(name: string) {
-        msgDialogueStore.set({
+        setDialogMsg({
             title: "Are you sure?",
             msg: `Are you sure you want to remove '${name}' db? THIS ACTION CANNOT BE UNDONE!`,
             options: ["Cancel", `Remove '${name}'`],
@@ -135,12 +88,10 @@
                 async () => {
                     let res = await RemoveDB(name);
                     if (res.error !== "") {
-                        triggerAlert(res.error, "alert-error");
+                        triggerAlert(res.error, "error");
                         return;
                     }
-                    await renderNavDataWithAlert(
-                        `Removed '${name}' successfully!`,
-                    );
+                    await renderNavWithAlert(`Removed '${name}' successfully!`);
                 },
             ],
             show: true,
@@ -153,19 +104,23 @@
         // Update sessionStorage whenever openDBName changes
         let res = await GetCurrentDB();
         if (res.error !== "") {
-            triggerAlert(res.error, "alert-error");
+            triggerAlert(res.error, "error");
         }
-        openDBName = res.results ? res.results : "";
-        dbNameStore.set(openDBName);
-        renderNavData();
-        document.addEventListener("submit", handleSubmit);
+        appState.currentDB = res.results ? res.results : "";
+        await renderNav();
+        document.addEventListener("submit", async (e) => await handleSubmit(e));
     });
-    onDestroy(() => document.removeEventListener("submit", handleSubmit));
+    onDestroy(() =>
+        document.removeEventListener(
+            "submit",
+            async (e) => await handleSubmit(e),
+        ),
+    );
 </script>
 
 <dialog bind:this={modal} class="modal">
     <div class="modal-box">
-        <form id="db-form" action="" method="POST">
+        <form id="db-form">
             <h3 class="text-secondary modal-header text-2xl pt-4 pb-8">
                 Create Database
             </h3>
@@ -188,6 +143,7 @@
                                 class="radio radio-primary"
                                 name="cache"
                                 id="cache-private"
+                                value="private"
                                 checked
                             /></label
                         >
@@ -199,6 +155,7 @@
                                 class="radio radio-primary"
                                 name="cache"
                                 id="cache-shared"
+                                value="shared"
                             /></label
                         >
                     </div>
@@ -215,6 +172,7 @@
                                 name="journal"
                                 id="journal-normal"
                                 checked
+                                value=""
                             /></label
                         >
                         <label
@@ -225,6 +183,7 @@
                                 class="radio radio-primary"
                                 name="journal"
                                 id="journal-wal"
+                                value="wal"
                             /></label
                         >
                     </div>
@@ -241,6 +200,7 @@
                                 name="sync"
                                 id="sync-normal"
                                 checked
+                                value=""
                             /></label
                         >
                         <label
@@ -251,6 +211,7 @@
                                 class="radio radio-primary"
                                 name="sync"
                                 id="sync-full"
+                                value="full"
                             /></label
                         >
                         <label
@@ -261,6 +222,7 @@
                                 class="radio radio-primary"
                                 name="sync"
                                 id="sync-off"
+                                value="off"
                             /></label
                         >
                     </div>
@@ -277,6 +239,7 @@
                                 name="lock"
                                 id="lock-normal"
                                 checked
+                                value=""
                             /></label
                         >
                         <label
@@ -287,6 +250,7 @@
                                 class="radio radio-primary"
                                 name="lock"
                                 id="lock-exclusive"
+                                value="exclusive"
                             /></label
                         >
                     </div>
@@ -323,9 +287,9 @@
         </button>
     </div>
     <ul class="menu menu-vertical w-full">
-        {#if Object.keys(databases).length > 0}
+        {#if appState.navData && Object.keys(appState.navData).length > 0}
             <li>
-                <details open={"main" === openDBName} class="">
+                <details open={appState.currentDB === "main"}>
                     <summary
                         class="truncate text-secondary"
                         title={"main"}
@@ -335,8 +299,8 @@
                     </summary>
 
                     <ul>
-                        {#if databases["main"]}
-                            {#each databases["main"].tables as tblName}
+                        {#if appState.navData["main"]}
+                            {#each appState.navData["main"].tables as tblName}
                                 <li>
                                     <div class="grid">
                                         <i class="fa-solid fa-table"></i>
@@ -361,35 +325,37 @@
                 </details>
             </li>
             <div class="border-b m-2"></div>
-            {#if rootPath !== "main"}
-                <h3 class="italic truncate">{rootPath}</h3>
+            {#if appState.rootPath !== "main"}
+                <h3 class="italic truncate">{appState.rootPath}</h3>
             {/if}
-            {#each Object.entries(databases).filter((db) => db[0] !== "main") as db}
+            {#each Object.keys(appState.navData).filter((db) => db !== "main") as db}
                 <li>
-                    <details open={db[0] === openDBName} class="max-w-full">
+                    <details
+                        open={appState.currentDB === db}
+                        class="max-w-full"
+                    >
                         <summary
-                            title={db[0]}
-                            onclick={(e) => handleToggle(e, db[0])}
+                            title={db}
+                            onclick={(e) => handleToggle(e, db)}
                         >
                             <div><i class="fa-solid fa-database"></i></div>
                             <div
                                 class="px-2 flex space-x-4 items-center justify-between"
                             >
-                                <span class="truncate">{db[0]}</span>
-                                {#if db[1].app_created}
+                                <span class="truncate">{db}</span>
+                                {#if appState.navData[db].app_created}
                                     <button
                                         class="btn btn-xs btn-ghost"
                                         aria-label="Remove DB"
-                                        onclick={async () =>
-                                            await removeDB(db[0])}
+                                        onclick={async () => await removeDB(db)}
                                         ><i class="fa-solid fa-trash"></i>
                                     </button>
                                 {/if}
                             </div>
                         </summary>
                         <ul>
-                            {#if databases[db[0]].tables}
-                                {#each databases[db[0]].tables as tblName}
+                            {#if appState.navData[db].tables}
+                                {#each appState.navData[db].tables as tblName}
                                     <li>
                                         <div class="grid w-full">
                                             <i class="fa-solid fa-table"></i>

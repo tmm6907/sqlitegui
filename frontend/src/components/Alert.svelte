@@ -1,21 +1,30 @@
 <script lang="ts">
     import { fly } from "svelte/transition";
-    import { alertStore } from "../stores/alertStore.ts";
+    import { appState } from "src/stores/appState.svelte.ts";
 
-    let msg = $state("");
-    let type = $state("alert-success");
-    let show = $state(false);
-    alertStore.subscribe((alert) => {
-        msg = alert.msg;
-        type = alert.type;
-        show = alert.show;
+    $effect(() => {
+        if (appState.alert.show) {
+            console.log(appState.alert.type);
+            const timerId = setTimeout(() => {
+                appState.alert.duration = 3000;
+                appState.alert.msg = "";
+                appState.alert.show = false;
+            }, appState.alert.duration);
+            return () => {
+                clearTimeout(timerId);
+            };
+        }
     });
 </script>
 
-{#if show}
+{#if appState.alert.show}
     <div
         role="alert"
-        class="alert {type} max-w-[48ch] fixed top-8 left-[85%] transform -translate-x-1/2 z-20 shadow-lg"
+        class={`
+        alert alert-${appState.alert.type} 
+        max-w-[48ch] fixed top-4 right-8 
+        transform z-20 shadow-lg
+    `}
         transition:fly={{ y: -50, duration: 500 }}
     >
         <svg
@@ -31,6 +40,6 @@
                 d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
             ></path>
         </svg>
-        <span>{msg}</span>
+        <span>{appState.alert.msg}</span>
     </div>
 {/if}

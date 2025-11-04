@@ -3,7 +3,7 @@ import { mount } from 'svelte';
 import App from "./App.svelte";
 import './style.css';
 import { EventsOn } from "../wailsjs/runtime/runtime.js";
-import { renderNavDataWithAlert } from "./stores/renderNav.ts";
+import { renderNavWithAlert } from './utils/utils.ts';
 
 const app = mount(App, {
   target: document.getElementById('app'),
@@ -18,23 +18,23 @@ interface emitData {
 
 export function setupWailsEventsListeners() {
   EventsOn("dbAttached", async () => {
-    await renderNavDataWithAlert("DB imported successfully!");
+    await renderNavWithAlert("DB imported successfully!");
   });
   EventsOn("dbAttachFailed", async () => {
-    await renderNavDataWithAlert("DB failed to import!", "alert-error");
+    await renderNavWithAlert("DB failed to import!", "error");
   });
   EventsOn("dbExportFailed", async (data) => {
-    await renderNavDataWithAlert(data.error, "alert-error")
+    await renderNavWithAlert(data.error, "error")
   })
   EventsOn("dbExportSucceeded", async (data: emitData) => {
-    await renderNavDataWithAlert(data.msg)
+    await renderNavWithAlert(data.msg)
   })
 
   EventsOn("dbUploadFailed", async (data) => {
-    await renderNavDataWithAlert(data.error, "alert-error")
+    await renderNavWithAlert(data.error, "error")
   })
 
   EventsOn("dbUploadSucceeded", async (data: emitData) => {
-    await renderNavDataWithAlert(data.msg)
+    await renderNavWithAlert(data.msg)
   })
 }

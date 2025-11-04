@@ -1,35 +1,37 @@
 <script lang="ts">
-    import { resultAlertStore } from "../stores/alertStore.ts";
-
-    let msg = $state("");
-    let type = $state("success");
-    let show = $state(false);
-    // Subscribe to the store
-    resultAlertStore.subscribe((alert) => {
-        msg = alert.msg;
-        type = alert.type;
-        if (alert.show) {
-            show = true;
-        } else {
-            show = false;
+    import { appState } from "src/stores/appState.svelte.ts";
+    $effect(() => {
+        if (appState.resultAlert.show) {
+            const timerId = setTimeout(() => {
+                appState.resultAlert.duration = 3000;
+                appState.resultAlert.msg = "";
+                appState.resultAlert.show = false;
+            }, appState.resultAlert.duration);
+            return () => {
+                clearTimeout(timerId);
+            };
         }
     });
 </script>
 
 <div
-    class="
+    class={`
         absolute top-[-1.5em] right-0
         min-w-[16ch] z-20
         alert
-        alert-{type}
+        alert-${appState.resultAlert.type}
         transition-opacity duration-300
-        {show ? 'opacity-100 visible' : 'opacity-0 invisible'}
-    "
+        ${
+            appState.resultAlert.show
+                ? "opacity-100 visible"
+                : "opacity-0 invisible"
+        }
+    `}
 >
     <div>
         <i class="fa-solid fa-info"></i>
     </div>
     <div>
-        <span class="text-sm">{msg}</span>
+        <span class="text-sm">{appState.resultAlert.msg}</span>
     </div>
 </div>

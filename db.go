@@ -69,16 +69,19 @@ func cleanDBName(inputName string) string {
 	return strings.ToLower(baseName)
 }
 func (a *App) CreateDB(dbForm CreateDBRequest) Result {
-	var count int
+	a.logger.Debug(fmt.Sprint(dbForm))
 
-	if dbForm.Cache == "" || dbForm.Journal == "" || dbForm.Lock == "" || dbForm.Name == "" || dbForm.Sync == "" {
-		err := errors.New("invalid request. all fields are required")
+	if dbForm.Name == "" {
+		err := errors.New("invalid request. db name is required")
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]any{"error": BadRequestError})
 	}
 	dbForm.Name = cleanDBName(dbForm.Name)
 
-	if err := a.db.Get(&count, "SELECT COUNT(*) FROM dbs WHERE name = ?;", dbForm.Name); err != nil {
+	// 1. MANDATORY: Check for DB Name Uniqueness in Application Metadata
+	// The name used in the app/ATTACH command must be unique for the user.
+	var count int
+	if err := a.db.Get(&count, "SELECT COUNT(*) FROM main.dbs WHERE name = ? AND root = ?;", dbForm.Name, a.rootPath); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]string{
 			"error": InternalServerError,
@@ -86,14 +89,49 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 	}
 
 	if count > 0 {
+		// If the name is already used in the app, we must fail.
 		err := fmt.Errorf("database by that name already exists")
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]string{
-			"error": "database by that name already exists",
+			"error": "Database by that name already exists. Please choose a different application name.",
 		})
 	}
 
-	dbPath := a.getDBPath(dbForm.Name)
+	// --- MODIFICATION START: Ensure unique PHYSICAL file path ---
+	basePath := a.getDBPath(dbForm.Name) // e.g., /path/to/my_db.db
+	dbPath := basePath
+	suffix := 0
+	const maxAttempts = 100 // Safety break
+
+	// Split the name from the extension for easy suffixing (requires "path/filepath")
+	ext := filepath.Ext(basePath)
+	nameWithoutExt := basePath[:len(basePath)-len(ext)]
+
+	for i := range maxAttempts {
+		// Check if the file at the current path exists on disk
+		if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+			// File does not exist, path is unique. Break and proceed.
+			break
+		}
+
+		// File exists, so generate the next suffixed path (e.g., /path/to/my_db_1.db)
+		suffix++
+		dbPath = fmt.Sprintf("%s_%d%s", nameWithoutExt, suffix, ext)
+		a.logger.Debug(fmt.Sprintf("File collision detected. Trying new path: %s", dbPath))
+
+		if i == maxAttempts-1 {
+			err := fmt.Errorf("failed to find a unique file path for database: %s after 100 attempts", dbForm.Name)
+			a.logger.Error(err.Error())
+			return a.newResult(err, map[string]string{
+				"error": "Failed to create unique physical file path.",
+			})
+		}
+	}
+	// After the loop, dbPath holds the unique physical file path.
+	// dbForm.Name holds the original user-provided application name.
+	// --- MODIFICATION END ---
+
+	// Create the file using the unique path (dbPath)
 	if err := os.WriteFile(dbPath, []byte{}, SafePermissions); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(
@@ -104,8 +142,23 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 		)
 	}
 
-	if _, err := a.db.Exec("INSERT INTO dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbForm.Name, dbPath, a.rootPath, true); err != nil {
+	// Attach using the unique file path (dbPath) and the user's ORIGINAL name (dbForm.Name)
+	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, dbForm.Name)
+	if _, err := a.db.Exec(attachQuery); err != nil {
 		a.logger.Error(err.Error())
+		os.Remove(dbPath) // Clean up the created file
+		return a.newResult(
+			err,
+			map[string]any{
+				"error": InternalServerError,
+			})
+	}
+
+	// Insert into main.dbs using the original name (dbForm.Name) and the unique path (dbPath)
+	if _, err := a.db.Exec("INSERT INTO main.dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbForm.Name, dbPath, a.rootPath, true); err != nil {
+		a.logger.Error(err.Error())
+		a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbForm.Name))
+		os.Remove(dbPath) // Clean up the created file
 		return a.newResult(
 			err,
 			map[string]any{
@@ -137,20 +190,12 @@ func (a *App) CreateDB(dbForm CreateDBRequest) Result {
 		}
 	}
 
-	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", dbPath, dbForm.Name)
-	if _, err := a.db.Exec(attachQuery); err != nil {
-		a.logger.Error(err.Error())
-		return a.newResult(
-			err,
-			map[string]any{
-				"error": InternalServerError,
-			})
-	}
-
+	// Return the original user-provided name
 	return a.newResult(
 		nil,
 		map[string]any{
 			"message": fmt.Sprintf("%s has been completed successfully", dbForm.Name),
+			"name":    dbForm.Name, // This is the user-facing name
 		},
 	)
 }

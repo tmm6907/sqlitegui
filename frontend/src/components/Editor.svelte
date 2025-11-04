@@ -10,31 +10,19 @@
     import { sql } from "@codemirror/lang-sql";
     import { tags } from "@lezer/highlight";
     import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
-    import {
-        renderNavDataWithResultAlert,
-        triggerResultAlert,
-    } from "../stores/alertStore.ts";
-    import {
-        dbNameStore,
-        loadingResultsStore,
-        queryResults,
-    } from "../stores/resultsStore.ts";
     import { Query } from "../../wailsjs/go/main/App.js";
     import ListItem from "./ListItem.svelte";
-    import { nonpassive } from "svelte/legacy";
+    import { appState } from "src/stores/appState.svelte.ts";
+    import {
+        renderNavWithAlert,
+        renderNavWithResultAlert,
+        setQueryResults,
+        triggerResultAlert,
+    } from "src/utils/utils.ts";
 
     let editorView: EditorView;
-    let dbName = $state("");
 
     let queries = $state([]);
-    let loadingResults = $state(true);
-
-    loadingResultsStore.subscribe((val) => {
-        loadingResults = val;
-        console.log(loadingResults);
-    });
-
-    dbNameStore.subscribe((name) => (dbName = name));
 
     async function handleKeyDown(ev: KeyboardEvent) {
         if (
@@ -64,9 +52,9 @@
             triggerResultAlert("Query cannot be empty!", "error");
             return;
         }
-        loadingResultsStore.set(true);
+        appState.loadingQueryResults = true;
         let res = await Query({ query: query, editable: false });
-        loadingResultsStore.set(false);
+        appState.loadingQueryResults = false;
         if (res.error !== "" || undefined) {
             triggerResultAlert(res.error, "error");
             console.error(res.error);
@@ -74,24 +62,14 @@
         }
         let results = res.results;
         if (results) {
-            queryResults.set({
-                pk: results.pk,
-                cols: results.cols,
-                rows: results.rows,
-                editable: false,
-            });
-            renderNavDataWithResultAlert("Query successful!");
+            setQueryResults(results);
+            renderNavWithAlert("Query successful!");
         } else {
             let msg = results.rowsAffected
                 ? "Rows affected: " + results.rowsAffected
                 : "";
-            queryResults.set({
-                pk: false,
-                cols: [],
-                rows: [],
-                editable: false,
-            });
-            renderNavDataWithResultAlert(msg);
+            setQueryResults();
+            renderNavWithResultAlert(msg);
         }
         if (!queries.includes(query)) {
             queries = [query, ...queries];
@@ -110,7 +88,7 @@
         let el = document.getElementById(`list-item-${i}`);
         if (!el) {
             console.error("failed to select recent query");
-            triggerResultAlert("Failed to select recent query!", "alert-error");
+            triggerResultAlert("Failed to select recent query!", "error");
         }
         editorView.dispatch({
             changes: {
@@ -122,7 +100,7 @@
     }
 
     onMount(() => {
-        loadingResults = false;
+        appState.loadingQueryResults = false;
         let customHighlightStyle = HighlightStyle.define([
             { tag: tags.keyword, color: "var(--editor-primary)" },
             { tag: tags.string, color: "var(--editor-accent)" },
@@ -184,7 +162,11 @@
             class="h-full w-full textarea textarea-accent **:dark:caret-base-content"
         ></div>
     </div>
-    <div class="{loadingResults ? '' : 'invisible'} flex place-items-center">
+    <div
+        class="{appState.loadingQueryResults
+            ? ''
+            : 'invisible'} flex place-items-center"
+    >
         <span class="loading loading-spinner loading-md"></span>
     </div>
     <div class="flex-1 flex flex-col space-y-2 grid-rows-[auto_1fr]">

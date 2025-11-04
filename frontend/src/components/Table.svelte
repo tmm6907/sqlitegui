@@ -1,39 +1,21 @@
 <script lang="ts">
     import ResultAlert from "./ResultAlert.svelte";
     import { UpdateDB } from "../../wailsjs/go/main/App.js";
-    import {
-        queryResults,
-        tableName,
-        dbNameStore,
-    } from "../stores/resultsStore.ts";
-    import { triggerResultAlert } from "src/stores/alertStore.ts";
-    let rows = $state([]);
-    let cols = $state([]);
-    let hasPK = $state(false);
-    let prevEdit = $state({ id: "", value: "" });
-    let editable = $state(false);
-    let currTable = $state("");
-    let currDB = $state("");
-    queryResults.subscribe((value) => {
-        rows = value.rows;
-        console.log($state.snapshot(rows));
-        cols = value.cols;
-        hasPK = value.pk;
-        editable = value.editable;
-    });
+    import { appState } from "src/stores/appState.svelte.ts";
+    import { triggerResultAlert } from "src/utils/utils.ts";
 
+    let prevEdit = $state({ id: "", value: "" });
     async function handleEdit(
         value: string,
         rowIndex: number,
         colIndex: number,
     ) {
-        let rowID = rows[rowIndex][0];
-        let col = cols[colIndex];
-        let rowIDName = cols[0];
-        tableName.subscribe((name) => (currTable = name));
-        dbNameStore.subscribe((name) => (currDB = name));
+        let rowID = appState.queryResults.rows[rowIndex][0];
+        let col = appState.queryResults.cols[colIndex];
+        let rowIDName = appState.queryResults.cols[0];
+
         if (rowID !== prevEdit.id || value !== prevEdit.value) {
-            let query = `UPDATE ${currDB}.${currTable} SET ${col} = '%s' WHERE ${rowIDName} = '%v';`;
+            let query = `UPDATE ${appState.currentDB}.${appState.selectedTable} SET ${col} = '%s' WHERE ${rowIDName} = '%v';`;
             prevEdit.id = rowID;
             prevEdit.value = value;
 
@@ -41,7 +23,9 @@
             if (res.error !== "") {
                 console.error("update error", res.error);
             }
-            triggerResultAlert(`${currDB}.${currTable} updated successfully!`);
+            triggerResultAlert(
+                `${appState.currentDB}.${appState.selectedTable} updated successfully!`,
+            );
         }
     }
 </script>
@@ -49,7 +33,7 @@
 <div class="flex flex-col gap-1 h-full">
     <div class="flex relative justify-between items-center">
         <span
-            >Results{#if editable}
+            >Results{#if appState.queryResults.editable}
                 <span class="text-neutral-400 ml-2">(Editable)</span>
             {/if}</span
         >
@@ -58,7 +42,7 @@
     <div
         class={`
         rounded-box bg-base-100
-        outline ${editable ? "outline-warning" : "outline-base-content"} 
+        outline ${appState.queryResults.editable ? "outline-warning" : "outline-base-content"} 
         flex-1 overflow-y-auto overflow-x-auto 
         h-full p-[1em]
         `}
@@ -69,18 +53,20 @@
         >
             <thead class="text-center">
                 <tr>
-                    {#each cols as col, i}
+                    {#each appState.queryResults.cols as col, i}
                         <th class=""
-                            >{i == 0 && hasPK ? `${col} ( pk )` : col}</th
+                            >{i == 0 && appState.queryResults.pk
+                                ? `${col} ( pk )`
+                                : col}</th
                         >
                     {/each}
                 </tr>
             </thead>
             <tbody class="text-center">
-                {#each rows as row, rowIndex}
+                {#each appState.queryResults.rows as row, rowIndex}
                     <tr class="hover">
                         {#each row as item, colIndex}
-                            {#if colIndex == 0 || !editable}
+                            {#if colIndex == 0 || !appState.queryResults.editable}
                                 <td id={item}>{item}</td>
                             {:else}
                                 <td>

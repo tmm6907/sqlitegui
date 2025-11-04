@@ -67,22 +67,17 @@ func (a *App) attachMainDBs() error {
 		Path string `db:"path"`
 	}
 	var rows []dbInfo
-	if err := a.db.Select(&rows, "SELECT name, path from dbs;"); err != nil {
+	if err := a.db.Select(&rows, "SELECT name, path from main.dbs WHERE root = ?;", a.rootPath); err != nil {
+		a.logger.Error(err.Error())
 		return err
 	}
 	for _, row := range rows {
-
 		attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", row.Path, row.Name)
 		if _, err := a.db.Exec(attachQuery); err != nil {
-			a.logger.Debug(err.Error(), slog.String("filename", row.Path))
+			a.logger.Error(err.Error(), slog.String("filename", row.Path))
 			return err
 		}
 	}
-	var otherDBS []pragmaResult
-	if err := a.db.Select(&otherDBS, "PRAGMA database_list;"); err != nil {
-		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
-	}
-	a.logger.Debug(fmt.Sprint(otherDBS))
 	return nil
 }
 
@@ -102,7 +97,7 @@ func (a *App) getDBPath(db_name string) string {
 		a.logger.Error(err.Error())
 		return ""
 	}
-	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", db_name))
+	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", cleanDBName(db_name)))
 }
 
 func (a *App) findPK(query string) []string {

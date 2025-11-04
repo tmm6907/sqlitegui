@@ -30,20 +30,19 @@ func (a *App) OpenFolderOnStart() Result {
 		return a.newResult(err, nil)
 	}
 	a.rootPath = selection
-
 	err = a.attachMainDBs()
 	if err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil)
 	}
-	err = a.addFolderDBs(selection)
+	err = a.attachDBsFromFolder(selection)
 	if err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil)
 	}
 	return a.newResult(nil, map[string]any{"root": selection})
 }
-func (a *App) addFolderDBs(rootPath string) error {
+func (a *App) attachDBsFromFolder(rootPath string) error {
 	a.rootPath = rootPath
 
 	err := filepath.WalkDir(rootPath, func(path string, d os.DirEntry, err error) error {
@@ -56,16 +55,16 @@ func (a *App) addFolderDBs(rootPath string) error {
 			return nil
 		}
 
-		ext := strings.ToLower(filepath.Ext(path))
+		baseName, ext := parseFile(path)
 		if slices.Contains(dbFileTypes, ext) {
 
-			relPath, relErr := filepath.Rel(rootPath, path)
-			if relErr != nil {
-				a.logger.Error(fmt.Sprintf("Failed to get relative path for %s: %v", path, relErr))
-				return nil
-			}
+			// relPath, relErr := filepath.Rel(rootPath, path)
+			// if relErr != nil {
+			// 	a.logger.Error(fmt.Sprintf("Failed to get relative path for %s: %v", path, relErr))
+			// 	return nil
+			// }
 
-			baseName := relPath[:len(relPath)-len(ext)]
+			// baseName := relPath[:len(relPath)-len(ext)]
 
 			safeAlias := strings.ReplaceAll(baseName, string(filepath.Separator), "_")
 			safeAlias = strings.ReplaceAll(safeAlias, ".", "_")
