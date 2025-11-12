@@ -12,15 +12,15 @@ import (
 )
 
 func (a *App) SetCurrentDB(name string) AppResult {
-	if name == "" {
-		err := errors.New("invalid name")
-		a.logger.Error(err.Error())
-		return a.newResult(
-			err,
-			nil,
-			nil,
-		)
-	}
+	// if name == "" {
+	// 	err := errors.New("invalid name")
+	// 	a.logger.Error(err.Error())
+	// 	return a.newResult(
+	// 		err,
+	// 		nil,
+	// 		nil,
+	// 	)
+	// }
 	if _, err := a.db.Exec(
 		`INSERT INTO main.current_db (id, current_db)
 		VALUES (1, ?)

@@ -8,16 +8,16 @@ import (
 	"time"
 )
 
-var app *App
+var test_app *App
 
 func TestMain(m *testing.M) {
 	uniqueDBIdentifier := fmt.Sprintf("test_%d", time.Now().UnixNano())
-	app = NewApp(&CustomAppConfig{Logger: NewSLogger(), RootDBName: uniqueDBIdentifier})
-	app.startup(context.Background())
+	test_app = NewApp(&CustomAppConfig{Logger: NewSLogger(), RootDBName: uniqueDBIdentifier})
+	test_app.startup(context.Background())
 
 	exitCode := m.Run()
 
-	app.shutdown(app.ctx)
+	test_app.shutdown(test_app.ctx)
 
 	os.Exit(exitCode)
 }
@@ -28,21 +28,25 @@ func TestCurrentDB(t *testing.T) {
 		wantErr bool
 	}{
 		{"mustard", false},
-		{"", true},
 		{"2", false},
 		{"mustard6", false},
+		{"", false},
 	}
 
 	for _, tt := range tests {
-		res := app.SetCurrentDB(tt.dbName)
+		res := test_app.SetCurrentDB(tt.dbName)
 		if (res.Err != nil) != tt.wantErr {
 			t.Errorf("error expected %v setting current db: %s", tt.wantErr, res.Err.Error())
 		} else {
-			if name, _ := app.getCurrentDB(); tt.dbName != "" && name != tt.dbName {
+			if name, _ := test_app.getCurrentDB(); tt.dbName != "" && name != tt.dbName {
 				t.Errorf("got current db as '%s', expected db as '%s'", name, tt.dbName)
 			}
 		}
 	}
+	// res := test_app.SetCurrentDB("")
+	// if res.Err != nil {
+	// 	t.Errorf("error: %s", res.Err.Error())
+	// }
 }
 
 func TestCRUDDB(t *testing.T) {
@@ -97,18 +101,18 @@ func TestCRUDDB(t *testing.T) {
 	`
 
 	for _, tt := range createTests {
-		res := app.CreateDB(CreateDBRequest{tt.name, tt.cache, tt.journal, tt.sync, tt.lock})
+		res := test_app.CreateDB(CreateDBRequest{tt.name, tt.cache, tt.journal, tt.sync, tt.lock})
 		if (res.Err != nil) != tt.wantErr {
 			t.Errorf("DB: %s Expected error %v got: %v", tt.name, tt.wantErr, res.Err)
 		}
 
-		app.db.MustExec(query)
+		test_app.db.MustExec(query)
 
-		res = app.UpdateDB(UpdateRequest{tt.update.db, tt.update.table, tt.update.row, tt.update.column, tt.update.value})
+		res = test_app.UpdateDB(UpdateRequest{tt.update.db, tt.update.table, tt.update.row, tt.update.column, tt.update.value})
 		if (res.Err != nil) != tt.wantErr {
 			t.Errorf("Update DB: %s Expected error %v got: %v", tt.name, tt.wantErr, res.Err)
 		}
-		res = app.RemoveDB(tt.name)
+		res = test_app.RemoveDB(tt.name)
 		if (res.Err != nil) != tt.wantErr {
 			t.Errorf("DB: %s Expected error %v got: %v", tt.name, tt.wantErr, res.Err)
 		}

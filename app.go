@@ -18,6 +18,10 @@ import (
 //go:embed build.sql
 var buildScriptContent string
 
+var (
+	pkRegex = regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`)
+)
+
 type App struct {
 	ctx        context.Context
 	db         *sqlx.DB
@@ -29,9 +33,9 @@ type App struct {
 }
 
 type CustomAppConfig struct {
-	RootDBName           string
-	Logger               *slog.Logger
-	AttachDetachDisabled bool
+	RootDBName          string
+	Logger              *slog.Logger
+	AttachDetachEnabled bool
 }
 
 func NewApp(cfg *CustomAppConfig) *App {
@@ -41,14 +45,14 @@ func NewApp(cfg *CustomAppConfig) *App {
 	return &App{
 		rootDBName: cfg.RootDBName,
 		logger:     cfg.Logger,
-		unlocked:   cfg.AttachDetachDisabled,
-		pkRegex:    regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`),
+		unlocked:   cfg.AttachDetachEnabled,
+		pkRegex:    pkRegex,
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	dbPath := a.getDBPath("main")
+	dbPath := a.getDBPath(a.rootDBName)
 	// 3. Ensure the subdirectory exists (optional, but good practice)
 	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
 		panic(err)

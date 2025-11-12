@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -122,14 +123,15 @@ func (a *App) Query(q QueryRequest) AppResult {
 
 func (a *App) QueryAll(table string) AppResult {
 	dbName, err := a.getCurrentDB()
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil, nil)
 	}
-	if dbName == "" {
-		return a.newResult(errors.New("unable to determine current db"), nil, nil)
+	var query string
+	if dbName != "" {
+		query = fmt.Sprintf("SELECT * FROM %s.%s LIMIT 50;", dbName, table)
+	} else {
+		query = fmt.Sprintf("SELECT * FROM %s LIMIT 50;", table)
 	}
-
-	query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 50;", dbName, table)
 	return a.handleSelectQueries(query, true)
 }
