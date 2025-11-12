@@ -2,9 +2,9 @@ package main
 
 import (
 	"embed"
-	"log"
 	"log/slog"
 	"os"
+	"os/exec"
 
 	"runtime"
 
@@ -28,6 +28,37 @@ const (
 	SCREEN_HEIGHT = 1080
 )
 
+type TargetOS string
+
+func (t TargetOS) String() string {
+	return string(t)
+}
+
+const (
+	LINUX   TargetOS = "linux"
+	MAC_OS  TargetOS = "darwin"
+	WINDOWS TargetOS = "windows"
+)
+
+type WailsEmitType string
+
+func (w WailsEmitType) String() string {
+	return string(w)
+}
+
+const (
+	DB_UPLOAD_SUCCESS   WailsEmitType = "dbUploadSucceeded"
+	DB_UPLOAD_FAIL      WailsEmitType = "dbUploadFailed"
+	DB_EXPORT_SUCCESS   WailsEmitType = "dbExportSucceeded"
+	DB_EXPORT_FAIL      WailsEmitType = "dbExportFailed"
+	NEW_WINDOW_SUCCESS  WailsEmitType = "newWindowSucceeded"
+	NEW_WINDOW_FAIL     WailsEmitType = "newWindowFailed"
+	OPEN_FOLDER_SUCCESS WailsEmitType = "openFolderSucceeded"
+	OPEN_FOLDER_FAIL    WailsEmitType = "openFolderFailed"
+	IMPORT_DB_SUCCESS   WailsEmitType = "importDBSucceeded"
+	IMPORT_DB_FAIL      WailsEmitType = "importDBFailed"
+)
+
 func NewSLogger() *slog.Logger {
 	// Configure the handler options
 	opts := &slog.HandlerOptions{
@@ -42,52 +73,60 @@ func NewSLogger() *slog.Logger {
 	return slog.New(handler)
 }
 
-func main() {
-	// Create an instance of the app structure
-	logger := NewSLogger()
-	app := NewApp(logger, true)
-
+func (a *App) newAppMenu() *menu.Menu {
 	AppMenu := menu.NewMenu()
-	isMac := runtime.GOOS == "darwin"
-	// AppMenu.Append(menu.WindowMenu())
+	isMac := runtime.GOOS == MAC_OS.String()
 	if isMac {
 		AppMenu.Append(menu.AppMenu())
 		AppMenu.Append(menu.EditMenu())
 	}
+
 	FileMenu := AppMenu.AddSubmenu("File")
 	FileMenu.AddText("New Window", keys.CmdOrCtrl("n"), func(cd *menu.CallbackData) {
-
+		appExecutable, err := os.Executable()
+		if err != nil {
+			a.logger.Error(err.Error())
+			a.emit(NEW_WINDOW_FAIL, err.Error())
+			return
+		}
+		cmd := exec.Command(appExecutable)
+		if err = cmd.Start(); err != nil {
+			a.logger.Error(err.Error())
+			a.emit(NEW_WINDOW_FAIL, err.Error())
+			return
+		}
+		a.emit(NEW_WINDOW_SUCCESS, "")
 	})
 	FileMenu.AddText("Import", keys.CmdOrCtrl("o"), func(_ *menu.CallbackData) {
-		app.importDB()
+		a.importDB()
 	})
 	FileMenu.AddText("Open Folder...", keys.CmdOrCtrl("K"), func(_ *menu.CallbackData) {
-		app.openFolder()
+		a.openFolder()
 	})
 	FileMenu.AddSeparator()
 	FileMenu.AddText("Create new db from data file", keys.CmdOrCtrl("D"), func(_ *menu.CallbackData) {
-		app.uploadDB()
+		a.uploadDB()
 	})
 	FileMenu.AddSeparator()
 	exportSubMenu := menu.NewMenuFromItems(
 		menu.Text("Export to New DB File", keys.Combo("d", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-			app.exportDB(".db")
+			a.exportDB(".db")
 		}),
 
 		menu.Text("Export to CSV (Zip)", keys.Combo("c", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-			app.exportDB(".csv")
+			a.exportDB(".csv")
 		}),
 
 		menu.Text("Export to JSON (Zip)", keys.Combo("j", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-			app.exportDB(".json")
+			a.exportDB(".json")
 		}),
 
 		menu.Text("Export to SQL (ZIP)", keys.Combo("s", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-			app.exportDB(".sql")
+			a.exportDB(".sql")
 		}),
 
 		menu.Text("Export to DB (ZIP)", keys.Combo("b", keys.CmdOrCtrlKey, keys.ShiftKey), func(_ *menu.CallbackData) {
-			app.exportDB("")
+			a.exportDB("")
 		}),
 	)
 	FileMenu.Merge(exportSubMenu)
@@ -97,19 +136,25 @@ func main() {
 	})
 	FileMenu.AddSeparator()
 	FileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		rt.Quit(app.ctx)
+		rt.Quit(a.ctx)
 	})
+	return AppMenu
+}
 
-	// Create application with options
-	err := wails.Run(&options.App{
+func main() {
+	// Create an instance of the app structure
+	logger := NewSLogger()
+	app := NewApp(&CustomAppConfig{
+		Logger: logger,
+	})
+	AppMenu := app.newAppMenu()
+	appInstance := options.App{
 		Title:  APP_NAME,
 		Width:  SCREEN_WIDTH,
 		Height: SCREEN_HEIGHT,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		// Frameless:        !isMac,
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
 		Bind: []any{
@@ -123,12 +168,13 @@ func main() {
 			Theme: windows.Dark,
 		},
 		// EnableDefaultContextMenu: true,
-		Debug: options.Debug{
-			OpenInspectorOnStartup: true,
-		},
-	})
+		// Debug: options.Debug{
+		// 	OpenInspectorOnStartup: true,
+		// },
+	}
+	err := wails.Run(&appInstance)
 
 	if err != nil {
-		log.Fatal(err.Error())
+		panic(err)
 	}
 }

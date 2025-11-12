@@ -1,5 +1,19 @@
 export namespace main {
 	
+	export class AppResult {
+	    error: any;
+	    results: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.error = source["error"];
+	        this.results = source["results"];
+	    }
+	}
 	export class CreateDBRequest {
 	    name: string;
 	    cache: string;
@@ -34,23 +48,11 @@ export namespace main {
 	        this.editable = source["editable"];
 	    }
 	}
-	export class Result {
-	    error: string;
-	    results: any;
-	
-	    static createFrom(source: any = {}) {
-	        return new Result(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.error = source["error"];
-	        this.results = source["results"];
-	    }
-	}
 	export class UpdateRequest {
-	    id: any;
-	    query: string;
+	    db: string;
+	    table: string;
+	    row: any[][];
+	    column: string;
 	    value: string;
 	
 	    static createFrom(source: any = {}) {
@@ -59,8 +61,10 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.query = source["query"];
+	        this.db = source["db"];
+	        this.table = source["table"];
+	        this.row = source["row"];
+	        this.column = source["column"];
 	        this.value = source["value"];
 	    }
 	}

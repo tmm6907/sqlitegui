@@ -6,27 +6,31 @@
 
     let prevEdit = $state({ id: "", value: "" });
     async function handleEdit(
-        value: string,
+        e: FocusEvent,
         rowIndex: number,
         colIndex: number,
     ) {
-        let rowID = appState.queryResults.rows[rowIndex][0];
+        let target = e.target as HTMLInputElement;
+        let value = target.value;
+        let row = appState.queryResults.rows[rowIndex];
         let col = appState.queryResults.cols[colIndex];
-        let rowIDName = appState.queryResults.cols[0];
-
-        if (rowID !== prevEdit.id || value !== prevEdit.value) {
-            let query = `UPDATE ${appState.currentDB}.${appState.selectedTable} SET ${col} = '%s' WHERE ${rowIDName} = '%v';`;
-            prevEdit.id = rowID;
-            prevEdit.value = value;
-
-            let res = await UpdateDB({ query: query, id: rowID, value: value });
-            if (res.error !== "") {
-                console.error("update error", res.error);
-            }
-            triggerResultAlert(
-                `${appState.currentDB}.${appState.selectedTable} updated successfully!`,
-            );
+        let rowData = [appState.queryResults.cols, row];
+        let res = await UpdateDB({
+            db: appState.currentDB,
+            table: appState.selectedTable,
+            row: rowData,
+            column: col,
+            value: value,
+        });
+        if (res.error) {
+            console.error("update error", res.error);
+            target.value = prevEdit.value;
+            triggerResultAlert(res.error, "error");
+            return;
         }
+        triggerResultAlert(
+            `${appState.currentDB}.${appState.selectedTable} updated successfully!`,
+        );
     }
 </script>
 
@@ -66,17 +70,14 @@
                 {#each appState.queryResults.rows as row, rowIndex}
                     <tr class="hover">
                         {#each row as item, colIndex}
-                            {#if colIndex == 0 || !appState.queryResults.editable}
-                                <td id={item}>{item}</td>
-                            {:else}
+                            {#if appState.queryResults.editable}
                                 <td>
                                     <input
                                         class="input focus:input-accent text-center"
                                         type="text"
                                         onblur={async (e) =>
-                                            handleEdit(
-                                                (e.target as HTMLInputElement)
-                                                    .value,
+                                            await handleEdit(
+                                                e,
                                                 rowIndex,
                                                 colIndex,
                                             )}
@@ -84,6 +85,8 @@
                                         value={item}
                                     />
                                 </td>
+                            {:else}
+                                <td>{item}</td>
                             {/if}
                         {/each}
                     </tr>

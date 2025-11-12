@@ -4,12 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strings"
 )
 
-func (a *App) handleSelectQueries(query string, editable bool) Result {
-	a.logger.Debug(query)
+func (a *App) handleSelectQueries(query string, editable bool) AppResult {
 	rows, err := a.db.Query(query)
 	if err != nil {
 		a.logger.Error("failed to run query: %s", slog.Any("error", err.Error()))
@@ -18,6 +16,7 @@ func (a *App) handleSelectQueries(query string, editable bool) Result {
 			map[string]any{
 				"error": BadRequestError,
 			},
+			nil,
 		)
 	}
 	columns, _ := rows.Columns()
@@ -27,12 +26,10 @@ func (a *App) handleSelectQueries(query string, editable bool) Result {
 		values := make([]any, len(columns))
 		valuePtrs := make([]any, len(columns))
 
-		// Assign each pointer to the corresponding interface
 		for i := range values {
 			valuePtrs[i] = &values[i]
 		}
 
-		// Scan the row into the value pointers
 		if err := rows.Scan(valuePtrs...); err != nil {
 			a.logger.Error("failed to run query: %s", slog.Any("error", err))
 			return a.newResult(
@@ -40,45 +37,22 @@ func (a *App) handleSelectQueries(query string, editable bool) Result {
 				map[string]any{
 					"error": InternalServerError,
 				},
+				nil,
 			)
 		}
 
-		// Create a map for the current row
 		rowMap := make([]any, len(columns))
 		for i := range columns {
-			// Dereference the value
 			rowMap[i] = values[i]
 		}
-
 		rowData = append(rowData, rowMap)
 	}
-	indexes := a.findPK(query)
-	includedIndexes := []string{}
-	if strings.Contains(query, "*") {
-		includedIndexes = indexes
-	} else {
-		for _, i := range indexes {
-			if strings.Contains(query, i) {
-				includedIndexes = append(includedIndexes, i)
-			}
-		}
+	data := map[string]any{
+		"cols":     columns,
+		"rows":     rowData,
+		"editable": editable,
 	}
-
-	cols := includedIndexes
-	for _, col := range columns {
-		if !slices.Contains(cols, col) {
-			cols = append(cols, col)
-		}
-	}
-
-	return a.newResult(
-		nil,
-		map[string]any{
-			"pk":       len(indexes) > 0,
-			"cols":     columns,
-			"rows":     rowData,
-			"editable": editable,
-		})
+	return a.newResult(nil, data, nil)
 }
 
 type QueryRequest struct {
@@ -86,7 +60,7 @@ type QueryRequest struct {
 	Editable bool   `json:"editable"`
 }
 
-func (a *App) Query(q QueryRequest) Result {
+func (a *App) Query(q QueryRequest) AppResult {
 	editable := q.Editable
 	query := q.Query
 	if query == "" {
@@ -95,6 +69,7 @@ func (a *App) Query(q QueryRequest) Result {
 			map[string]any{
 				"error": BadRequestError,
 			},
+			nil,
 		)
 	}
 	if !a.unlocked {
@@ -105,6 +80,7 @@ func (a *App) Query(q QueryRequest) Result {
 				map[string]any{
 					"error": BadRequestError,
 				},
+				nil,
 			)
 		}
 		query = q
@@ -120,6 +96,7 @@ func (a *App) Query(q QueryRequest) Result {
 				map[string]any{
 					"error": BadRequestError,
 				},
+				nil,
 			)
 		}
 		rowsAffected, err := result.RowsAffected()
@@ -129,6 +106,7 @@ func (a *App) Query(q QueryRequest) Result {
 				map[string]any{
 					"error": BadRequestError,
 				},
+				nil,
 			)
 		}
 		a.logger.Debug("Rows affected: %s", slog.Int64("debug", rowsAffected))
@@ -137,18 +115,19 @@ func (a *App) Query(q QueryRequest) Result {
 			map[string]any{
 				"rowsAffected": rowsAffected,
 			},
+			nil,
 		)
 	}
 }
 
-func (a *App) QueryAll(table string) Result {
+func (a *App) QueryAll(table string) AppResult {
 	dbName, err := a.getCurrentDB()
 	if err != nil {
 		a.logger.Error(err.Error())
-		return a.newResult(err, nil)
+		return a.newResult(err, nil, nil)
 	}
 	if dbName == "" {
-		return a.newResult(errors.New("unable to determine current db"), nil)
+		return a.newResult(errors.New("unable to determine current db"), nil, nil)
 	}
 
 	query := fmt.Sprintf("SELECT * FROM %s.%s LIMIT 50;", dbName, table)

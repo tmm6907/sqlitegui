@@ -9,7 +9,7 @@ export interface NavDatabases {
 export interface QueryResults {
     pk: boolean,
     cols: string[],
-    rows: string[],
+    rows: string[][],
     editable: boolean
 }
 

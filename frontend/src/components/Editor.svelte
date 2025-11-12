@@ -55,7 +55,7 @@
         appState.loadingQueryResults = true;
         let res = await Query({ query: query, editable: false });
         appState.loadingQueryResults = false;
-        if (res.error !== "" || undefined) {
+        if (res.error) {
             triggerResultAlert(res.error, "error");
             console.error(res.error);
             return;

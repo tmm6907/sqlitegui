@@ -57,6 +57,7 @@
 
     async function handleToggle(e: MouseEvent, dbName: string) {
         e.preventDefault();
+        appState.queryResults.editable = false;
         if (appState.currentDB === dbName) {
             appState.currentDB = "";
             return;
@@ -87,7 +88,7 @@
                 () => {},
                 async () => {
                     let res = await RemoveDB(name);
-                    if (res.error !== "") {
+                    if (res.error) {
                         triggerAlert(res.error, "error");
                         return;
                     }
@@ -103,7 +104,7 @@
     onMount(async () => {
         // Update sessionStorage whenever openDBName changes
         let res = await GetCurrentDB();
-        if (res.error !== "") {
+        if (res.error) {
             triggerAlert(res.error, "error");
         }
         appState.currentDB = res.results ? res.results : "";
@@ -326,7 +327,9 @@
             </li>
             <div class="border-b m-2"></div>
             {#if appState.rootPath !== "main"}
-                <h3 class="italic truncate">{appState.rootPath}</h3>
+                <h3 class="italic truncate w-full" title={appState.rootPath}>
+                    {appState.rootPath}
+                </h3>
             {/if}
             {#each Object.keys(appState.navData).filter((db) => db !== "main") as db}
                 <li>

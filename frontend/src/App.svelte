@@ -4,7 +4,7 @@
   import Table from "./components/Table.svelte";
   import Alert from "./components/Alert.svelte";
   import { setupWailsEventsListeners } from "./main.ts";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import {
     GetRootPath,
     OpenFolderOnStart,
@@ -25,10 +25,27 @@
     }
   }
 
+  const handleKeydown = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "n") {
+      // Stop the browser's default "New Window" action (which causes the refresh)
+      e.preventDefault();
+
+      // You can optionally tell Wails to run your "New Window" Go function from here,
+      // but the menu shortcut (which is *also* registered) should now work
+      // without the browser interfering.
+    }
+  };
+
   onMount(async () => {
     let res = await GetRootPath();
     appState.rootPath = res.results.root;
     console.log("Root", appState.rootPath);
+
+    window.addEventListener("keydown", handleKeydown);
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("keydown", handleKeydown);
   });
 </script>
 

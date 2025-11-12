@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -80,31 +80,29 @@ func (a *App) openFolder() {
 	})
 	if err != nil {
 		a.logger.Error(err.Error())
+		a.emit(OPEN_FOLDER_FAIL, err.Error())
+		return
+	}
+	if selection == a.rootPath {
+		a.emit(OPEN_FOLDER_FAIL, "folder already selected")
 		return
 	}
 	a.logger.Debug(selection)
-	db, err := sqlx.Open("sqlite3", fmt.Sprintf("%s:memory:", selection))
-
-	err = filepath.WalkDir(selection, func(path string, d os.DirEntry, err error) error {
-
-		if err != nil {
-			fmt.Printf("Error accessing path %q: %v\n", path, err)
-			return err // Stop the walk on error
-		}
-		if d.IsDir() {
-			fmt.Printf("DIR: %s\n", path)
-		} else {
-			bn := filepath.Base(path)
-			if slices.Contains(dbFileTypes, filepath.Ext(bn)) {
-				dbName, _ := parseFile(path)
-				a.logger.Debug(fmt.Sprint(dbName))
-			}
-		}
-
-		// 3. Return nil to continue the walk
-		return nil
-	})
-	a.logger.Debug(fmt.Sprint(db))
+	if err = a.detachDBs(); err != nil {
+		a.logger.Error(err.Error())
+		a.emit(OPEN_FOLDER_FAIL, err.Error())
+		return
+	}
+	a.rootPath = selection
+	if err = a.attachMainDBs(); err != nil {
+		a.logger.Error(err.Error())
+		a.emit(OPEN_FOLDER_FAIL, err.Error())
+		return
+	}
+	if err = a.attachDBsFromFolder(selection); err != nil {
+		a.logger.Error(err.Error())
+	}
+	a.emit(OPEN_FOLDER_SUCCESS, "")
 }
 
 func (a *App) importDB() {
@@ -125,18 +123,11 @@ func (a *App) importDB() {
 
 	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
 	dbName, _ := parseFile(selection)
-	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", selection, dbName)
-	if _, err = a.db.Exec(attachQuery); err != nil {
-		a.logger.Error(fmt.Sprintf("Failed to ATTACH database %s: %v", dbName, err))
-		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
+	if err := a.storeDB(dbName, selection, false); err != nil {
+		a.logger.Error(err.Error())
+		runtime.EventsEmit(a.ctx, IMPORT_DB_FAIL.String(), map[string]any{"error": err.Error()})
 	}
-
-	if _, err = a.db.Exec("INSERT into dbs (name, path, root) VALUES (?,?,?);", dbName, selection, a.rootPath); err != nil {
-		a.logger.Error(fmt.Sprintf("Failed to add database %s: %v", dbName, err))
-		a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
-		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
-	}
-	runtime.EventsEmit(a.ctx, "dbAttached", dbName)
+	runtime.EventsEmit(a.ctx, IMPORT_DB_FAIL.String(), dbName)
 }
 
 func (a *App) exportDB(format string) {
@@ -348,7 +339,7 @@ func (a *App) uploadDB() {
 		}})
 	if err != nil {
 		a.logger.Error(err.Error())
-		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+		a.emit(DB_UPLOAD_FAIL, err.Error())
 		return
 	}
 	if selection == "" {
@@ -363,15 +354,17 @@ func (a *App) uploadDB() {
 	file, err := os.ReadFile(selection)
 	if err != nil {
 		a.logger.Error(err.Error())
-		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+		a.emit(DB_UPLOAD_FAIL, err.Error())
 		return
 	}
+	dbName = cleanDBName(dbName)
+	dbPath := a.getDBPath(dbName)
 	switch ext {
 	case ".json":
 		var fileData any
 		if err = json.Unmarshal(file, &fileData); err != nil {
 			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": err.Error()})
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
 		switch data := fileData.(type) {
@@ -387,7 +380,8 @@ func (a *App) uploadDB() {
 							finalDataframe = append(finalDataframe, rowMap)
 						} else {
 							a.logger.Error("malformed json: array element is not an object", slog.Any("element", item))
-							runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json structure: expected array of objects"})
+							err := errors.New("malformed json structure: expected array of objects")
+							a.emit(DB_UPLOAD_FAIL, err.Error())
 							return
 						}
 					}
@@ -395,7 +389,8 @@ func (a *App) uploadDB() {
 
 				} else {
 					a.logger.Error("malformed json: expected array for table data", slog.Any("data_type", fmt.Sprintf("%T", tblData)))
-					runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json: table data not an array"})
+					err := errors.New("malformed json structure: expected array of objects")
+					a.emit(DB_UPLOAD_FAIL, err.Error())
 					return
 				}
 			}
@@ -412,7 +407,8 @@ func (a *App) uploadDB() {
 			}
 		default:
 			a.logger.Error("malformed json")
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "malformed json"})
+			err := errors.New("malformed json")
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
 
@@ -420,13 +416,15 @@ func (a *App) uploadDB() {
 		csvReader := csv.NewReader(bytes.NewReader(file))
 		if csvReader == nil {
 			a.logger.Error("unable to read csv")
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "unable to read csv"})
+			err := errors.New("unable to read csv")
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
 		rows, err := csvReader.ReadAll()
 		if err != nil {
 			a.logger.Error("unable to read csv")
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "unable to read csv"})
+			err := errors.New("unable to read csv")
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
 
@@ -446,68 +444,50 @@ func (a *App) uploadDB() {
 		dfs = append(dfs, data)
 		tableNames = append(tableNames, dbName)
 	case ".sql":
-		dbPath := a.getDBPath(dbName)
 		db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 		if err != nil {
 			a.logger.Error("Error converting to db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+			err := errors.New("error converting to db")
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
 		defer db.Close()
 		if _, err = db.Exec(string(file)); err != nil {
 			a.logger.Error("Opening new db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Opening new db."})
-		}
-		attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
-		_, err = a.db.Exec(attachQuery)
-		if err != nil {
-			a.logger.Error("Error converting to db: " + err.Error())
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
-			return
+			err := errors.New("error opening db")
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 		}
 
-		_, err = a.db.Exec("INSERT into dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbName, dbPath, a.rootPath, true)
-		if err != nil {
-			a.logger.Error("Error converting to db: " + err.Error())
-			a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
-			runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		if err := a.storeDB(dbName, dbPath, true); err != nil {
+			a.logger.Error(err.Error())
+			a.emit(DB_UPLOAD_FAIL, err.Error())
 			return
 		}
-		a.emit("dbUploadSucceeded", "DB uploaded successfully!")
+		a.emit(DB_UPLOAD_SUCCESS, "DB uploaded successfully!")
 		return
 	}
 
-	dbPath := a.getDBPath(dbName)
 	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 	if err != nil {
 		a.logger.Error("Error converting to db: " + err.Error())
-		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+		err := errors.New("error converting to db")
+		a.emit(DB_UPLOAD_FAIL, err.Error())
 		return
 	}
 	for i, df := range dfs {
 		if i < len(tableNames) {
 			if err := df.convertToSQLite(db, tableNames[i]); err != nil {
 				a.logger.Error("Error converting to db: " + err.Error())
-				runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
+				err := errors.New("error converting to db")
+				a.emit(DB_UPLOAD_FAIL, err.Error())
 				return
 			}
 		}
 	}
 	db.Close()
-	attachQuery := fmt.Sprintf("ATTACH DATABASE '%s' AS %s;", dbPath, dbName)
-	_, err = a.db.Exec(attachQuery)
-	if err != nil {
-		a.logger.Error("Error converting to db: " + err.Error())
-		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
-		return
+	if err := a.storeDB(dbName, dbPath, true); err != nil {
+		a.logger.Error(err.Error())
+		a.emit(DB_UPLOAD_FAIL, err.Error())
 	}
-
-	_, err = a.db.Exec("INSERT into dbs (name, path, root, app_created) VALUES (?,?,?,?);", dbName, dbPath, a.rootPath, true)
-	if err != nil {
-		a.logger.Error("Error converting to db: " + err.Error())
-		a.db.Exec(fmt.Sprintf("DETACH DATABASE %s;", dbName))
-		runtime.EventsEmit(a.ctx, "dbUploadFailed", map[string]any{"error": "Error converting to db."})
-		return
-	}
-	a.emit("dbUploadSucceeded", "DB uploaded successfully!")
+	a.emit(DB_UPLOAD_SUCCESS, "DB uploaded successfully!")
 }

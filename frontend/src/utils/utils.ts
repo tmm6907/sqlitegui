@@ -1,5 +1,5 @@
 import { appState, type AlertType, type DialogMessage, type QueryResults } from "src/stores/appState.svelte.ts"
-import { GetNavData } from "../../wailsjs/go/main/App.js"
+import { GetCurrentDB, GetNavData } from "../../wailsjs/go/main/App.js"
 
 export const setQueryResults = (
     results: QueryResults = { pk: false, cols: [], rows: [], editable: false }
@@ -40,6 +40,11 @@ export async function renderNav() {
     }
     console.log("Nav:", res)
     appState.navData = res.results ? res.results : []
+    res = await GetCurrentDB();
+    if (res.error) {
+        triggerAlert(res.error, "error");
+    }
+    appState.currentDB = res.results ? res.results : "";
 }
 
 export async function renderNavWithAlert(msg: string, type: AlertType = "success") {

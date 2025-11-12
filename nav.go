@@ -12,10 +12,10 @@ type pragmaResult struct {
 	File string `db:"file"`
 }
 
-func (a *App) GetNavData() Result {
+func (a *App) GetNavData() AppResult {
 	if a.db == nil {
 		a.logger.Error("FATAL: GetNavData called before database was initialized or after it failed to open.")
-		return a.newResult(errors.New("database not available"), nil)
+		return a.newResult(errors.New("database not available"), nil, nil)
 	}
 
 	data := make(map[string]DBResult)
@@ -25,14 +25,14 @@ func (a *App) GetNavData() Result {
 
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 
-		return a.newResult(err, nil)
+		return a.newResult(err, nil, nil)
 	}
 	data["main"] = DBResult{mainTables, false}
 	a.logger.Debug(fmt.Sprintf("Main Data:, %v", data))
 	var otherDBS []models.DB
 	if err := a.db.Select(&otherDBS, "SELECT * from main.dbs WHERE root = ?", a.rootPath); err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
-		return a.newResult(err, nil)
+		return a.newResult(err, nil, nil)
 	}
 	dbNames := make([]string, len(otherDBS))
 	a.logger.Debug(fmt.Sprint(otherDBS))
@@ -49,7 +49,7 @@ func (a *App) GetNavData() Result {
 		a.logger.Debug(fmt.Sprintf("%s %s", query, dbName))
 		if err := a.db.Select(&tables, query); err != nil {
 			a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
-			return a.newResult(err, nil)
+			return a.newResult(err, nil, nil)
 		}
 		data[db.Name] = DBResult{tables, db.App_Created}
 	}
@@ -60,5 +60,6 @@ func (a *App) GetNavData() Result {
 	return a.newResult(
 		nil,
 		data,
+		nil,
 	)
 }

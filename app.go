@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
@@ -17,21 +18,31 @@ import (
 //go:embed build.sql
 var buildScriptContent string
 
-var pkRegex = regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`)
-
 type App struct {
-	ctx      context.Context
-	db       *sqlx.DB
-	pkRegex  *regexp.Regexp
-	logger   *slog.Logger
-	unlocked bool
-	rootPath string
+	ctx        context.Context
+	db         *sqlx.DB
+	pkRegex    *regexp.Regexp
+	logger     *slog.Logger
+	unlocked   bool
+	rootDBName string
+	rootPath   string
 }
 
-func NewApp(logger *slog.Logger, unlocked bool) *App {
+type CustomAppConfig struct {
+	RootDBName           string
+	Logger               *slog.Logger
+	AttachDetachDisabled bool
+}
+
+func NewApp(cfg *CustomAppConfig) *App {
+	if cfg.RootDBName == "" {
+		cfg.RootDBName = "main"
+	}
 	return &App{
-		logger:   logger,
-		unlocked: unlocked,
+		rootDBName: cfg.RootDBName,
+		logger:     cfg.Logger,
+		unlocked:   cfg.AttachDetachDisabled,
+		pkRegex:    regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`),
 	}
 }
 
@@ -40,23 +51,12 @@ func (a *App) startup(ctx context.Context) {
 	dbPath := a.getDBPath("main")
 	// 3. Ensure the subdirectory exists (optional, but good practice)
 	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
-		a.logger.Error(err.Error())
-		return
+		panic(err)
 	}
-	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
-	if err != nil {
-		a.logger.Error(fmt.Sprintf("DB failed to open %s: %s", dbPath, err.Error()))
-		return
-	}
-	if _, err := db.Exec("PRAGMA journal_mode=WAL;"); err != nil {
-		a.logger.Error(fmt.Sprintf("unable to configure db: %s", err.Error()))
-		return
-	}
+	db := sqlx.MustOpen(SQLITE_DRIVER, dbPath)
+	db.MustExec("PRAGMA journal_mode=WAL;")
 
-	if _, err := db.Exec(buildScriptContent); err != nil {
-		a.logger.Error("unable to run build script for db: %s", slog.Any("error", err))
-		return
-	}
+	db.MustExec(buildScriptContent)
 	a.db = db
 	a.logger.Info("starting app")
 }
@@ -85,8 +85,7 @@ func (a *App) shutdown(ctx context.Context) {
 	if a.db != nil {
 		// This is the ONLY place db.Close() should be called.
 		if err := a.db.Close(); err != nil {
-			a.logger.Error(fmt.Sprintf("Failed to close database: %s", err.Error()))
-			return
+			panic(err)
 		}
 	}
 }
@@ -100,60 +99,85 @@ func (a *App) getDBPath(db_name string) string {
 	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", cleanDBName(db_name)))
 }
 
-func (a *App) findPK(query string) []string {
-	found := pkRegex.FindStringSubmatch(query)
-	if len(found) <= 1 {
-		return []string{}
-	}
-	tableName := found[1]
-	a.logger.Debug("Table: %s", slog.String("tablename", tableName))
+// func (a *App) findPK(query string) []string {
+// 	found := a.pkRegex.FindStringSubmatch(query)
+// 	if len(found) <= 1 {
+// 		return []string{}
+// 	}
+// 	tableName := found[1]
+// 	a.logger.Debug("Table: %s", slog.String("tablename", tableName))
 
-	// Step 1: Check for PRIMARY KEY columns using PRAGMA table_info
-	var columnNames []string
-	a.db.Select(&columnNames, fmt.Sprintf(`
-		SELECT name FROM pragma_table_info('%s') WHERE pk > 0
-	`, tableName))
+// 	// Step 1: Check for PRIMARY KEY columns using PRAGMA table_info
+// 	var columnNames []string
+// 	a.db.Select(&columnNames, fmt.Sprintf(`
+// 		SELECT name FROM pragma_table_info('%s') WHERE pk > 0
+// 	`, tableName))
 
-	if len(columnNames) > 0 {
-		return columnNames
-	}
+// 	if len(columnNames) > 0 {
+// 		return columnNames
+// 	}
 
-	// Step 2: If no PK columns were found, check for a primary key index (for composite PKs)
-	var indexName string
-	if err := a.db.Get(&indexName, fmt.Sprintf(`
-		SELECT name FROM pragma_index_list('%s') WHERE origin='u' LIMIT 1
-	`, tableName)); err != nil {
-		return []string{}
-	}
-	if err := a.db.Select(&columnNames, fmt.Sprintf(`
-		SELECT name FROM pragma_index_info('%s')
-	`, indexName)); err != nil {
-		return []string{}
-	}
-	return columnNames
+// 	// Step 2: If no PK columns were found, check for a primary key index (for composite PKs)
+// 	var indexName string
+// 	if err := a.db.Get(&indexName, fmt.Sprintf(`
+// 		SELECT name FROM pragma_index_list('%s') WHERE origin='u' LIMIT 1
+// 	`, tableName)); err != nil {
+// 		return []string{}
+// 	}
+// 	if err := a.db.Select(&columnNames, fmt.Sprintf(`
+// 		SELECT name FROM pragma_index_info('%s')
+// 	`, indexName)); err != nil {
+// 		return []string{}
+// 	}
+// 	return columnNames
+// }
+
+type EmitEvent struct {
+	Type WailsEmitType
+	Msg  string
 }
 
-func (a *App) newResult(err error, results any) Result {
-	if err != nil {
-		return Result{
-			ErrStr:  err.Error(),
-			Results: results,
-		}
+func (a *App) newResult(err error, results any, emit *EmitEvent) AppResult {
+	if emit != nil {
+		runtime.EventsEmit(
+			a.ctx,
+			emit.Type.String(),
+			map[string]string{"msg": emit.Msg},
+		)
 	}
-	return Result{
-		ErrStr:  "",
+	return AppResult{
+		Err:     err,
 		Results: results,
 	}
+
 }
 
-func (a *App) emit(emitType string, emitMsg string) {
+func (a *App) emit(emitType WailsEmitType, emitMsg string) {
 	runtime.EventsEmit(
 		a.ctx,
-		emitType,
+		emitType.String(),
 		map[string]string{"msg": emitMsg},
 	)
 }
 
-func (a *App) GetRootPath() Result {
-	return a.newResult(nil, map[string]any{"root": a.rootPath})
+func (a *App) GetRootPath() AppResult {
+	return a.newResult(nil, map[string]any{"root": a.rootPath}, nil)
+}
+
+func (a *App) detachDBs() error {
+	var dbNames []string
+	if err := a.db.Select(&dbNames, "SELECT name FROM pragma_database_list;"); err != nil {
+		return err
+	}
+	var detachQueries []string
+	for _, dbName := range dbNames {
+		if dbName != "main" {
+			detachQueries = append(detachQueries, fmt.Sprintf("DETACH DATABASE '%s'", dbName))
+		}
+	}
+	query := strings.Join(detachQueries, "; ")
+	if _, err := a.db.Exec(query); err != nil {
+		return err
+	}
+	return nil
 }
