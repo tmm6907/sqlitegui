@@ -21,56 +21,14 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-const (
-	APP_NAME      = "SQLite GUI"
-	SQLITE_DRIVER = "sqlite3"
-	SCREEN_WIDTH  = 1920
-	SCREEN_HEIGHT = 1080
-)
-
-type TargetOS string
-
-func (t TargetOS) String() string {
-	return string(t)
-}
-
-const (
-	LINUX   TargetOS = "linux"
-	MAC_OS  TargetOS = "darwin"
-	WINDOWS TargetOS = "windows"
-)
-
-type WailsEmitType string
-
-func (w WailsEmitType) String() string {
-	return string(w)
-}
-
-const (
-	DB_UPLOAD_SUCCESS   WailsEmitType = "dbUploadSucceeded"
-	DB_UPLOAD_FAIL      WailsEmitType = "dbUploadFailed"
-	DB_EXPORT_SUCCESS   WailsEmitType = "dbExportSucceeded"
-	DB_EXPORT_FAIL      WailsEmitType = "dbExportFailed"
-	NEW_WINDOW_SUCCESS  WailsEmitType = "newWindowSucceeded"
-	NEW_WINDOW_FAIL     WailsEmitType = "newWindowFailed"
-	OPEN_FOLDER_SUCCESS WailsEmitType = "openFolderSucceeded"
-	OPEN_FOLDER_FAIL    WailsEmitType = "openFolderFailed"
-	IMPORT_DB_SUCCESS   WailsEmitType = "importDBSucceeded"
-	IMPORT_DB_FAIL      WailsEmitType = "importDBFailed"
-)
-
 func NewSLogger() *slog.Logger {
 	// Configure the handler options
 	opts := &slog.HandlerOptions{
 		Level:     slog.LevelDebug, // Set your desired minimum log level
 		AddSource: true,            // This includes the file and line number
 	}
-
-	// Create a TextHandler writing to Stderr
-	handler := slog.NewTextHandler(os.Stderr, opts)
-
 	// Create and return the logger
-	return slog.New(handler)
+	return slog.New(slog.NewTextHandler(os.Stderr, opts))
 }
 
 func (a *App) newAppMenu() *menu.Menu {
@@ -142,10 +100,12 @@ func (a *App) newAppMenu() *menu.Menu {
 }
 
 func main() {
+
 	// Create an instance of the app structure
 	logger := NewSLogger()
 	app := NewApp(&CustomAppConfig{
-		Logger: logger,
+		Logger:        logger,
+		DialogService: &WailsDialogService{},
 	})
 	AppMenu := app.newAppMenu()
 	appInstance := options.App{
@@ -172,9 +132,9 @@ func main() {
 		// 	OpenInspectorOnStartup: true,
 		// },
 	}
-	err := wails.Run(&appInstance)
 
-	if err != nil {
+	if err := wails.Run(&appInstance); err != nil {
 		panic(err)
 	}
+
 }

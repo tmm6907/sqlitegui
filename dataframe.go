@@ -5,29 +5,10 @@ import (
 	"fmt"
 	"log"
 	"reflect"
-	"regexp"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
-
-type Dataframe []map[string]any
-
-var illegalChars = regexp.MustCompile(`[^a-zA-Z0-9_]`)
-
-func cleanTableName(name string) string {
-	name = strings.TrimSpace(name)
-	name = illegalChars.ReplaceAllString(name, "_")
-	if name != "" && name[0] >= '0' && name[0] <= '9' {
-		name = "_" + name
-	}
-	name = strings.ReplaceAll(name, "__", "_")
-	for strings.Contains(name, "__") {
-		name = strings.ReplaceAll(name, "__", "_")
-	}
-	name = strings.Trim(name, "_")
-	return fmt.Sprintf(`"%s"`, name)
-}
 
 func castToSQLiteType(t reflect.Type) string {
 	switch t.Kind() {
@@ -50,12 +31,16 @@ func castToSQLiteType(t reflect.Type) string {
 	}
 }
 
-func (d Dataframe) convertToSQLite(db *sqlx.DB, tableName string) error {
-	if len(d) == 0 {
+type Series = map[string]any
+type Dataframe = []Series
+
+func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
+	if len(*d) == 0 {
 		return fmt.Errorf("cannot convert empty Dataframe to database")
 	}
+	df := *d
 
-	firstRow := d[0]
+	firstRow := df[0]
 	columnDefinitions := ""
 	columnNames := []string{}
 
@@ -104,7 +89,7 @@ func (d Dataframe) convertToSQLite(db *sqlx.DB, tableName string) error {
 	}
 	defer stmt.Close()
 
-	for _, row := range d {
+	for _, row := range df {
 		values := make([]any, len(columnNames))
 		// log.Println(row)
 		for i, colName := range columnNames {
@@ -136,4 +121,10 @@ func (d Dataframe) convertToSQLite(db *sqlx.DB, tableName string) error {
 	}
 
 	return nil
+}
+
+// map{dbName: map{ tableName : [map {columnName: value}]}}
+
+func convertFromSQLite(db *sqlx.DB) (*Dataframe, error) {
+	return nil, nil
 }

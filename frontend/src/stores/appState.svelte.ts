@@ -1,7 +1,7 @@
 export type AlertType = "success" | "error" | "warning" | "info";
 export interface DatabaseInfo {
     tables: string[];
-    app_created: boolean;
+    appCreated: boolean;
 }
 export interface NavDatabases {
     [key: string]: DatabaseInfo;

@@ -1,26 +1,8 @@
 package main
 
 import (
-	"context"
-	"fmt"
-	"os"
 	"testing"
-	"time"
 )
-
-var test_app *App
-
-func TestMain(m *testing.M) {
-	uniqueDBIdentifier := fmt.Sprintf("test_%d", time.Now().UnixNano())
-	test_app = NewApp(&CustomAppConfig{Logger: NewSLogger(), RootDBName: uniqueDBIdentifier})
-	test_app.startup(context.Background())
-
-	exitCode := m.Run()
-
-	test_app.shutdown(test_app.ctx)
-
-	os.Exit(exitCode)
-}
 
 func TestCurrentDB(t *testing.T) {
 	tests := []struct {

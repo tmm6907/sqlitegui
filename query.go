@@ -56,11 +56,6 @@ func (a *App) handleSelectQueries(query string, editable bool) AppResult {
 	return a.newResult(nil, data, nil)
 }
 
-type QueryRequest struct {
-	Query    string `json:"query"`
-	Editable bool   `json:"editable"`
-}
-
 func (a *App) Query(q QueryRequest) AppResult {
 	editable := q.Editable
 	query := q.Query
@@ -74,7 +69,7 @@ func (a *App) Query(q QueryRequest) AppResult {
 		)
 	}
 	if !a.unlocked {
-		q, found := ContainsAttachStatement(query)
+		q, found := containsAttachStatement(query)
 		if found {
 			return a.newResult(
 				errors.New(BadRequestError),

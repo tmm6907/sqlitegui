@@ -3,24 +3,21 @@ package main
 import (
 	"errors"
 	"fmt"
-	"sqlitegui/models"
 )
 
-type pragmaResult struct {
-	Seq  int    `db:"seq"`
-	Name string `db:"name"`
-	File string `db:"file"`
-}
-
 func (a *App) GetNavData() AppResult {
+	type DBResult struct {
+		Tables     []string `json:"tables"`
+		AppCreated bool     `json:"appCreated"`
+	}
+	var mainTables []string
+
 	if a.db == nil {
 		a.logger.Error("FATAL: GetNavData called before database was initialized or after it failed to open.")
 		return a.newResult(errors.New("database not available"), nil, nil)
 	}
 
 	data := make(map[string]DBResult)
-	var mainTables []string
-
 	if err := a.db.Select(&mainTables, "SELECT name FROM main.sqlite_master WHERE type='table' AND name!='dbs';"); err != nil {
 
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
@@ -28,35 +25,24 @@ func (a *App) GetNavData() AppResult {
 		return a.newResult(err, nil, nil)
 	}
 	data["main"] = DBResult{mainTables, false}
-	a.logger.Debug(fmt.Sprintf("Main Data:, %v", data))
-	var otherDBS []models.DB
-	if err := a.db.Select(&otherDBS, "SELECT * from main.dbs WHERE root = ?", a.rootPath); err != nil {
+	otherDBS, err := a.getStoredDBs()
+	if err != nil {
 		a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 		return a.newResult(err, nil, nil)
 	}
-	dbNames := make([]string, len(otherDBS))
-	a.logger.Debug(fmt.Sprint(otherDBS))
-	for i, db := range otherDBS {
-		var dbName string
-		query := fmt.Sprintf("SELECT name FROM pragma_database_list WHERE file = '%s' LIMIT 1;", db.Path)
-		a.logger.Debug(query)
-		a.db.Get(&dbName, query)
-		if dbName != "" {
-			dbNames[i] = dbName
+	for _, db := range otherDBS {
+		dbName, err := a.getSQLiteDBName(db.Path)
+		if err != nil {
+			a.logger.Error(err.Error())
+			return a.newResult(err, nil, nil)
 		}
-		var tables []string
-		query = fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", db.Name)
-		a.logger.Debug(fmt.Sprintf("%s %s", query, dbName))
-		if err := a.db.Select(&tables, query); err != nil {
+		tables, err := a.getTableList(dbName)
+		if err != nil {
 			a.logger.Error(fmt.Sprintf("Failed to fetch tables: %s", err.Error()))
 			return a.newResult(err, nil, nil)
 		}
 		data[db.Name] = DBResult{tables, db.App_Created}
 	}
-
-	a.logger.Debug(fmt.Sprintf("All Data:, %v", data))
-
-	// FIX 4: Return the successful result payload directly
 	return a.newResult(
 		nil,
 		data,

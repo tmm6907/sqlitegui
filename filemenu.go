@@ -1,6 +1,7 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/csv"
 	"encoding/json"
@@ -10,7 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"regexp"
+	"sqlitegui/models"
 	"strconv"
 	"strings"
 
@@ -18,27 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-var (
-	// Regex 1: Finds common Windows/system file copy suffixes like " (1)", "( 2)", or " ( 3 )"
-	// at the end of a string ($). These are replaced with an empty string.
-	reDuplicate = regexp.MustCompile(`\s*\(\s*\d+\s*\)\s*$`)
-
-	// Regex 2: Finds any character that is NOT an alphanumeric character (a-z, A-Z, 0-9) or an underscore (_).
-	// These invalid characters are replaced with a single underscore.
-	reInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_]+`)
-	dbFileTypes    = []string{".db", ".sqlite"}
-)
-
-type ColumnInfo struct {
-	Name       string  `db:"name"`
-	Type       string  `db:"type"`
-	NotNull    bool    `db:"notnull"`
-	PK         int     `db:"pk"`
-	CID        string  `db:"cid"`
-	DFLT_value *string `db:"dflt_value"`
-}
-
-func generatePlaceholders(count int) string {
+func generateINSERTPlaceholders(count int) string {
 	s := make([]string, count)
 	for i := range s {
 		s[i] = "?"
@@ -63,19 +44,8 @@ func determineFieldType(value string) any {
 	return value
 }
 
-func parseFile(selection string) (string, string) {
-	baseName := filepath.Base(selection)
-	fileExt := filepath.Ext(baseName)
-	dbNameWithExt := strings.TrimSuffix(baseName, fileExt)
-
-	sanitizedName := reDuplicate.ReplaceAllString(dbNameWithExt, "")
-	dbName := reInvalidChars.ReplaceAllString(sanitizedName, "_")
-	dbName = strings.ToLower(dbName)
-	return dbName, fileExt
-}
-
 func (a *App) openFolder() {
-	selection, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := a.dialog.OpenDirectory(a.ctx, runtime.OpenDialogOptions{
 		Title: "Open DB Folder",
 	})
 	if err != nil {
@@ -106,7 +76,7 @@ func (a *App) openFolder() {
 }
 
 func (a *App) importDB() {
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := a.dialog.OpenFile(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select SQLite Database to Import",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "SQLite Files (*.db, *.sqlite)", Pattern: "*.db;*.sqlite"},
@@ -114,67 +84,174 @@ func (a *App) importDB() {
 
 	if err != nil {
 		a.logger.Error(err.Error())
-		runtime.EventsEmit(a.ctx, "dbAttachFailed", map[string]any{"error": err.Error()})
+		a.emit(IMPORT_DB_FAIL, err.Error())
 		return
 	}
 	if selection == "" {
+		a.emit(IMPORT_DB_FAIL, "selection cannot be empty")
 		return
 	}
-
-	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
 	dbName, _ := parseFile(selection)
 	if err := a.storeDB(dbName, selection, false); err != nil {
 		a.logger.Error(err.Error())
-		runtime.EventsEmit(a.ctx, IMPORT_DB_FAIL.String(), map[string]any{"error": err.Error()})
+		a.emit(IMPORT_DB_FAIL, err.Error())
+		return
 	}
-	runtime.EventsEmit(a.ctx, IMPORT_DB_FAIL.String(), dbName)
+	a.emit(IMPORT_DB_SUCCESS, dbName)
+}
+
+func (a *App) exportToZip(path string, ext string) error {
+	switch ext {
+	case ".csv":
+		zipFile, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer zipFile.Close()
+
+		zipWriter := zip.NewWriter(zipFile)
+		defer zipWriter.Close()
+
+		dbs, err := a.getSQLiteDBNames()
+		if err != nil {
+			return err
+		}
+		for _, dbName := range dbs {
+			tableNames, err := a.getTableList(dbName)
+			if err != nil {
+				return err
+			}
+			for _, tblName := range tableNames {
+				tblData, err := a.getTableData(fmt.Sprintf("%s.%s", dbName, tblName))
+				if err != nil {
+					return err
+				}
+				headers, err := a.getColumns(tblName)
+				if err != nil {
+					return err
+				}
+				zipPath := filepath.Join(dbName, tblName) + ext
+				file, err := zipWriter.Create(zipPath)
+				if err != nil {
+					return err
+				}
+
+				// 2. Initialize the CSV Writer
+				csvWriter := csv.NewWriter(file)
+				defer csvWriter.Flush()
+
+				if err := csvWriter.Write(headers); err != nil {
+					return err
+				}
+				for _, s := range tblData {
+					var record []string
+
+					// Ensure the order of fields in the row matches the order of the headers
+					for _, header := range headers {
+						record = append(record, fmt.Sprint(s[header]))
+					}
+
+					// Write the record to the CSV file
+					if err := csvWriter.Write(record); err != nil {
+						return err
+					}
+				}
+				csvWriter.Flush()
+				if err := csvWriter.Error(); err != nil {
+					return err
+				}
+			}
+		}
+	case ".json":
+		zipFile, err := os.Create(path)
+		if err != nil {
+			return err
+		}
+		defer zipFile.Close()
+
+		zipWriter := zip.NewWriter(zipFile)
+		defer zipWriter.Close()
+
+		dbs, err := a.getSQLiteDBNames()
+		if err != nil {
+			return err
+		}
+		for _, dbName := range dbs {
+			tableNames, err := a.getTableList(dbName)
+			if err != nil {
+				return err
+			}
+			for _, tblName := range tableNames {
+				tblData, err := a.getTableData(fmt.Sprintf("%s.%s", dbName, tblName))
+				if err != nil {
+					return err
+				}
+				zipPath := filepath.Join(dbName, tblName) + ext
+				file, err := zipWriter.Create(zipPath)
+				if err != nil {
+					return err
+				}
+
+				// 2. Initialize the CSV Writer
+				body, err := json.Marshal(tblData)
+				if err != nil {
+					return err
+				}
+				_, err = file.Write(body)
+				if err != nil {
+					return err
+				}
+			}
+		}
+	default:
+		return errors.New("invalid format")
+	}
+	return nil
 }
 
 func (a *App) exportDB(format string) {
+
 	switch format {
 	case ".db":
-		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		selection, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 			Title:           "Save Exported Data",
 			DefaultFilename: "export.db",
 			Filters: []runtime.FileFilter{
 				{DisplayName: "DB Export file (*.db)", Pattern: "*.db;"},
 			},
 		})
-		a.logger.Debug(fmt.Sprint(filePath, err))
+		a.logger.Debug(fmt.Sprint(selection, err))
 		// PRAGMA database_list; select * from each table and create new tables in main and export
 		// copy all tables into main db and export as .db
-		newDB, err := sqlx.Connect("sqlite3", filePath)
+		newDB, err := sqlx.Connect("sqlite3", selection)
 		if err != nil {
 			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+			runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 			return
 		}
 		defer newDB.Close()
-		var dbs []pragmaResult
-
-		if err := a.db.Select(&dbs, "PRAGMA database_list;"); err != nil {
+		dbs, err := a.getStoredDBs()
+		if err != nil {
 			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+			runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 			return
 		}
 		for _, db := range dbs {
-			var tblNames []string
-			query := fmt.Sprintf("SELECT name from %s.sqlite_master where type='table';", db.Name)
-			if err := a.db.Select(&tblNames, query); err != nil {
+			tblNames, err := a.getTableList(db.Path)
+			if err != nil {
 				a.logger.Error(err.Error())
-				runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+				runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 				return
 			}
-
 			for _, tblName := range tblNames {
-				var colInfos []ColumnInfo
+				var colInfos []models.ColumnInfo
 				if tblName == "dbs" {
 					continue
 				}
-				newName := fmt.Sprintf("%s_%s", db.Name, tblName)
+
 				if err := a.db.Select(&colInfos, fmt.Sprintf("PRAGMA %s.table_info(%s);", db.Name, tblName)); err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 				if len(colInfos) == 0 {
@@ -195,16 +272,17 @@ func (a *App) exportDB(format string) {
 					}
 					columnDefs = append(columnDefs, def)
 				}
+				newName := fmt.Sprintf("%s_%s", db.Name, tblName)
 				createSQL := fmt.Sprintf("CREATE TABLE %s (%s);", newName, strings.Join(columnDefs, ", "))
 
-				placeholders := generatePlaceholders(len(columnNames))
+				placeholders := generateINSERTPlaceholders(len(columnNames))
 				insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);", newName, strings.Join(columnNames, ", "), placeholders)
 
 				// C. Start Transaction on the NEW DB (Critical for Atomicity)
 				tx, err := newDB.Begin()
 				if err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 
@@ -212,7 +290,7 @@ func (a *App) exportDB(format string) {
 				if _, err = tx.Exec(createSQL); err != nil {
 					tx.Rollback()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 
@@ -221,7 +299,7 @@ func (a *App) exportDB(format string) {
 				if err != nil {
 					tx.Rollback()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 
@@ -231,7 +309,7 @@ func (a *App) exportDB(format string) {
 					tx.Rollback()
 					stmt.Close()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 
@@ -281,41 +359,61 @@ func (a *App) exportDB(format string) {
 				if rollbackErr != nil {
 					tx.Rollback()
 					a.logger.Error("transaction failed")
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": "transaction failed"})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": "transaction failed"})
 					return
 				}
 
 				// I. Commit the Transaction for this table
 				if err = tx.Commit(); err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, "dbExportFailed", map[string]any{"error": err.Error()})
+					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
 					return
 				}
 				a.logger.Info(fmt.Sprintf("Successfully exported table: %s", newName))
 			}
 		}
 		a.logger.Info("db successfully exported")
-		runtime.EventsEmit(a.ctx, "dbExportSucceeded", map[string]any{"msg": "db successfully exported"})
+		a.emit(DB_EXPORT_SUCCESS, "Exported Successfully!")
 	case ".csv":
-		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		selection, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 			Title:           "Save Exported Data",
 			DefaultFilename: "export.zip",
 			Filters: []runtime.FileFilter{
-				{DisplayName: "CSV Export file (*.zip)", Pattern: "*.zip;"},
+				{DisplayName: "DB Export CSV file (*.zip)", Pattern: "*.zip;"},
 			},
 		})
-		a.logger.Debug(fmt.Sprint(filePath, err))
-		// PRAGMA database_list; new folders for each db, each table is a file
+		if err != nil {
+			a.logger.Error(err.Error())
+			a.emit(DB_EXPORT_FAIL, "db failed to export")
+			return
+		}
+
+		if err = a.exportToZip(selection, format); err != nil {
+			a.logger.Error(err.Error())
+			a.emit(DB_EXPORT_FAIL, "db failed to export")
+			return
+		}
 
 	case ".json":
-		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		selection, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
 			Title:           "Save Exported Data",
 			DefaultFilename: "export.zip",
 			Filters: []runtime.FileFilter{
-				{DisplayName: "JSON Export file (*.zip)", Pattern: "*.zip;"},
+				{DisplayName: "DB Export JSON file (*.zip)", Pattern: "*.zip;"},
 			},
 		})
-		a.logger.Debug(fmt.Sprint(filePath, err))
+		if err != nil {
+			a.logger.Error(err.Error())
+			a.emit(DB_EXPORT_FAIL, "db failed to export")
+			return
+		}
+
+		if err = a.exportToZip(selection, format); err != nil {
+			a.logger.Error(err.Error())
+			a.emit(DB_EXPORT_FAIL, "db failed to export")
+			return
+		}
+
 		// PRAGMA database_list; new folders for each db, each table is a file
 	case "":
 		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
@@ -332,7 +430,7 @@ func (a *App) exportDB(format string) {
 }
 
 func (a *App) uploadDB() {
-	selection, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	selection, err := a.dialog.OpenFile(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select data file to upload.",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "SQLite Data Files (*.csv, *.json, *.sql)", Pattern: "*.csv;*.json;*.sql;"},
@@ -343,22 +441,21 @@ func (a *App) uploadDB() {
 		return
 	}
 	if selection == "" {
+		a.emit(DB_UPLOAD_FAIL, "selection cannot be empty")
 		return
 	}
 
-	a.logger.Debug("Selected file: %s", slog.String("debug", selection))
 	dbName, ext := parseFile(selection)
 	a.logger.Debug(fmt.Sprintf("%s %s", dbName, ext))
-	dfs := []Dataframe{}
-	tableNames := []string{}
+	var dfs []*Dataframe
+	var tableNames []string
 	file, err := os.ReadFile(selection)
 	if err != nil {
 		a.logger.Error(err.Error())
 		a.emit(DB_UPLOAD_FAIL, err.Error())
 		return
 	}
-	dbName = cleanDBName(dbName)
-	dbPath := a.getDBPath(dbName)
+	dbPath := a.getNewDBPath(dbName)
 	switch ext {
 	case ".json":
 		var fileData any
@@ -369,15 +466,15 @@ func (a *App) uploadDB() {
 		}
 		switch data := fileData.(type) {
 		case map[string]any:
-			tables := []string{}
+
 			for tblName, tblData := range data {
-				tables = append(tables, cleanTableName(tblName))
+				tableNames = append(tableNames, cleanTableName(tblName))
 				a.logger.Debug(fmt.Sprint(tblData))
 				if sliceData, ok := tblData.([]any); ok {
-					var finalDataframe []map[string]any
+					finalDataframe := make(Dataframe, 0, len(sliceData))
 					for _, item := range sliceData {
 						if rowMap, rowOk := item.(map[string]any); rowOk {
-							finalDataframe = append(finalDataframe, rowMap)
+							finalDataframe = append(finalDataframe, (Series)(rowMap))
 						} else {
 							a.logger.Error("malformed json: array element is not an object", slog.Any("element", item))
 							err := errors.New("malformed json structure: expected array of objects")
@@ -385,7 +482,7 @@ func (a *App) uploadDB() {
 							return
 						}
 					}
-					dfs = append(dfs, finalDataframe)
+					dfs = append(dfs, &finalDataframe)
 
 				} else {
 					a.logger.Error("malformed json: expected array for table data", slog.Any("data_type", fmt.Sprintf("%T", tblData)))
@@ -394,21 +491,20 @@ func (a *App) uploadDB() {
 					return
 				}
 			}
-			tableNames = tables
 
 		case []any:
 			df := Dataframe{}
 			for _, el := range data {
 				if dfData, ok := el.(map[string]any); ok {
-					df = append(df, dfData)
+					df = append(df, (Series)(dfData))
 				}
-				dfs = append(dfs, df)
-				tableNames = append(tableNames, dbName)
 			}
+			dfs = append(dfs, &df)
+			tableNames = append(tableNames, dbName)
+			a.logger.Debug(fmt.Sprint(df, dfs, tableNames))
 		default:
 			a.logger.Error("malformed json")
-			err := errors.New("malformed json")
-			a.emit(DB_UPLOAD_FAIL, err.Error())
+			a.emit(DB_UPLOAD_FAIL, "malformed json")
 			return
 		}
 
@@ -416,22 +512,20 @@ func (a *App) uploadDB() {
 		csvReader := csv.NewReader(bytes.NewReader(file))
 		if csvReader == nil {
 			a.logger.Error("unable to read csv")
-			err := errors.New("unable to read csv")
-			a.emit(DB_UPLOAD_FAIL, err.Error())
+			a.emit(DB_UPLOAD_FAIL, "unable to read csv")
 			return
 		}
 		rows, err := csvReader.ReadAll()
 		if err != nil {
 			a.logger.Error("unable to read csv")
-			err := errors.New("unable to read csv")
-			a.emit(DB_UPLOAD_FAIL, err.Error())
+			a.emit(DB_UPLOAD_FAIL, "unable to read csv")
 			return
 		}
 
 		fieldNames := rows[0]
-		data := make(Dataframe, 0, len(fieldNames)-1)
+		data := make(Dataframe, 0, len(fieldNames))
 		for _, row := range rows[1:] {
-			rowData := make(map[string]any)
+			rowData := make(Series)
 			for i, name := range fieldNames {
 				if i < len(row) {
 					cleanedName := cleanTableName(name)
@@ -441,21 +535,20 @@ func (a *App) uploadDB() {
 			data = append(data, rowData)
 		}
 
-		dfs = append(dfs, data)
+		dfs = append(dfs, &data)
 		tableNames = append(tableNames, dbName)
 	case ".sql":
 		db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 		if err != nil {
 			a.logger.Error("Error converting to db: " + err.Error())
-			err := errors.New("error converting to db")
-			a.emit(DB_UPLOAD_FAIL, err.Error())
+			a.emit(DB_UPLOAD_FAIL, "error converting to db")
 			return
 		}
 		defer db.Close()
 		if _, err = db.Exec(string(file)); err != nil {
 			a.logger.Error("Opening new db: " + err.Error())
-			err := errors.New("error opening db")
-			a.emit(DB_UPLOAD_FAIL, err.Error())
+			a.emit(DB_UPLOAD_FAIL, "error converting to db")
+			return
 		}
 
 		if err := a.storeDB(dbName, dbPath, true); err != nil {
@@ -470,16 +563,14 @@ func (a *App) uploadDB() {
 	db, err := sqlx.Open(SQLITE_DRIVER, dbPath)
 	if err != nil {
 		a.logger.Error("Error converting to db: " + err.Error())
-		err := errors.New("error converting to db")
-		a.emit(DB_UPLOAD_FAIL, err.Error())
+		a.emit(DB_UPLOAD_FAIL, "error converting to db")
 		return
 	}
 	for i, df := range dfs {
 		if i < len(tableNames) {
-			if err := df.convertToSQLite(db, tableNames[i]); err != nil {
+			if err := convertToSQLite(df, db, tableNames[i]); err != nil {
 				a.logger.Error("Error converting to db: " + err.Error())
-				err := errors.New("error converting to db")
-				a.emit(DB_UPLOAD_FAIL, err.Error())
+				a.emit(DB_UPLOAD_FAIL, "error converting to db")
 				return
 			}
 		}
@@ -488,6 +579,7 @@ func (a *App) uploadDB() {
 	if err := a.storeDB(dbName, dbPath, true); err != nil {
 		a.logger.Error(err.Error())
 		a.emit(DB_UPLOAD_FAIL, err.Error())
+		return
 	}
 	a.emit(DB_UPLOAD_SUCCESS, "DB uploaded successfully!")
 }

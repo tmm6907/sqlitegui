@@ -346,7 +346,7 @@
                                 class="px-2 flex space-x-4 items-center justify-between"
                             >
                                 <span class="truncate">{db}</span>
-                                {#if appState.navData[db].app_created}
+                                {#if appState.navData[db].appCreated}
                                     <button
                                         class="btn btn-xs btn-ghost"
                                         aria-label="Remove DB"

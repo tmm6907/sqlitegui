@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	_ "embed"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sqlitegui/models"
 	"strings"
 
 	"github.com/jmoiron/sqlx"
@@ -15,12 +16,20 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
-//go:embed build.sql
-var buildScriptContent string
+type DialogService interface {
+	OpenDirectory(ctx context.Context, opts runtime.OpenDialogOptions) (string, error)
+	OpenFile(ctx context.Context, opts runtime.OpenDialogOptions) (string, error)
+}
 
-var (
-	pkRegex = regexp.MustCompile(`(?i)SELECT\s+.*?\s+FROM\s+(\w+)`)
-)
+type WailsDialogService struct{}
+
+func (w *WailsDialogService) OpenDirectory(ctx context.Context, opts runtime.OpenDialogOptions) (string, error) {
+	return runtime.OpenDirectoryDialog(ctx, opts)
+}
+
+func (w *WailsDialogService) OpenFile(ctx context.Context, opts runtime.OpenDialogOptions) (string, error) {
+	return runtime.OpenFileDialog(ctx, opts)
+}
 
 type App struct {
 	ctx        context.Context
@@ -30,12 +39,14 @@ type App struct {
 	unlocked   bool
 	rootDBName string
 	rootPath   string
+	dialog     DialogService
 }
 
 type CustomAppConfig struct {
 	RootDBName          string
 	Logger              *slog.Logger
 	AttachDetachEnabled bool
+	DialogService
 }
 
 func NewApp(cfg *CustomAppConfig) *App {
@@ -47,12 +58,13 @@ func NewApp(cfg *CustomAppConfig) *App {
 		logger:     cfg.Logger,
 		unlocked:   cfg.AttachDetachEnabled,
 		pkRegex:    pkRegex,
+		dialog:     cfg.DialogService,
 	}
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	dbPath := a.getDBPath(a.rootDBName)
+	dbPath := a.getNewDBPath(a.rootDBName)
 	// 3. Ensure the subdirectory exists (optional, but good practice)
 	if err := os.MkdirAll(filepath.Dir(dbPath), SafePermissions); err != nil {
 		panic(err)
@@ -63,6 +75,15 @@ func (a *App) startup(ctx context.Context) {
 	db.MustExec(buildScriptContent)
 	a.db = db
 	a.logger.Info("starting app")
+}
+
+func (a *App) shutdown(ctx context.Context) {
+	if a.db != nil {
+		// This is the ONLY place db.Close() should be called.
+		if err := a.db.Close(); err != nil {
+			panic(err)
+		}
+	}
 }
 
 func (a *App) attachMainDBs() error {
@@ -85,22 +106,31 @@ func (a *App) attachMainDBs() error {
 	return nil
 }
 
-func (a *App) shutdown(ctx context.Context) {
-	if a.db != nil {
-		// This is the ONLY place db.Close() should be called.
-		if err := a.db.Close(); err != nil {
-			panic(err)
+func (a *App) detachDBs() error {
+	var dbNames []string
+	if err := a.db.Select(&dbNames, "SELECT name FROM pragma_database_list;"); err != nil {
+		return err
+	}
+	var detachQueries []string
+	for _, dbName := range dbNames {
+		if dbName != "main" {
+			detachQueries = append(detachQueries, fmt.Sprintf("DETACH DATABASE '%s'", dbName))
 		}
 	}
+	query := strings.Join(detachQueries, "; ")
+	if _, err := a.db.Exec(query); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (a *App) getDBPath(db_name string) string {
+func (a *App) getNewDBPath(dbName string) string {
 	dataDir, err := os.UserConfigDir()
 	if err != nil {
 		a.logger.Error(err.Error())
 		return ""
 	}
-	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", cleanDBName(db_name)))
+	return filepath.Join(dataDir, "sqlitegui", "dbs", fmt.Sprintf("%s.db", cleanDBName(dbName)))
 }
 
 // func (a *App) findPK(query string) []string {
@@ -164,24 +194,101 @@ func (a *App) emit(emitType WailsEmitType, emitMsg string) {
 	)
 }
 
+func (a *App) storeDB(name string, path string, appCreated bool) error {
+	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", path, name)
+	if _, err := a.db.Exec(attachQuery); err != nil {
+		if strings.Contains(err.Error(), "already in use") {
+			return nil
+		}
+		if appCreated {
+			os.Remove(path)
+		} // Clean up the created file
+		return err
+	}
+	if _, err := a.db.Exec("INSERT OR IGNORE INTO main.dbs (name, path, root, app_created) VALUES (?,?,?,?);", name, path, a.rootPath, appCreated); err != nil {
+		a.db.Exec(fmt.Sprintf("DETACH DATABASE '%s';", name))
+		if appCreated {
+			os.Remove(path)
+		}
+		return err
+	}
+	return nil
+}
+
 func (a *App) GetRootPath() AppResult {
 	return a.newResult(nil, map[string]any{"root": a.rootPath}, nil)
 }
 
-func (a *App) detachDBs() error {
-	var dbNames []string
-	if err := a.db.Select(&dbNames, "SELECT name FROM pragma_database_list;"); err != nil {
-		return err
+func (a *App) getSQLiteDBName(path string) (string, error) {
+	var internalDBName string
+	if path == "" {
+		return "", errors.New("path cannot be empty")
 	}
-	var detachQueries []string
-	for _, dbName := range dbNames {
-		if dbName != "main" {
-			detachQueries = append(detachQueries, fmt.Sprintf("DETACH DATABASE '%s'", dbName))
+	query := fmt.Sprintf("SELECT name FROM pragma_database_list WHERE file = '%s' LIMIT 1;", path)
+	if err := a.db.Get(&internalDBName, query); err != nil {
+		return "", err
+	}
+	return internalDBName, nil
+}
+
+// gets list of dbs from main.dbs
+func (a *App) getStoredDBs() ([]models.DB, error) {
+	var mainDbs []models.DB
+	if err := a.db.Select(&mainDbs, "SELECT * from main.dbs WHERE root = ?", a.rootPath); err != nil {
+		return mainDbs, err
+	}
+	return mainDbs, nil
+}
+
+func (a *App) getSQLiteDBNames() ([]string, error) {
+	var names []string
+	dbs, err := a.getStoredDBs()
+	if err != nil {
+		return []string{}, err
+	}
+	for _, db := range dbs {
+		name, err := a.getSQLiteDBName(db.Path)
+		if err != nil {
+			return []string{}, err
 		}
+		names = append(names, name)
 	}
-	query := strings.Join(detachQueries, "; ")
-	if _, err := a.db.Exec(query); err != nil {
-		return err
+	return names, nil
+}
+
+// returns the list of all tables for given sqlite db name
+func (a *App) getTableList(dbName string) ([]string, error) {
+	var tables []string
+	query := fmt.Sprintf("SELECT name FROM %s.sqlite_master WHERE type='table';", dbName)
+	if err := a.db.Select(&tables, query); err != nil {
+		return tables, nil
 	}
-	return nil
+	return tables, nil
+}
+
+func (a *App) getTableData(tableName string) (Dataframe, error) {
+	var res Dataframe
+	query := fmt.Sprintf("SELECT * FROM %s;", tableName)
+	rows, err := a.db.Queryx(query)
+	if err != nil {
+		return res, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		row := make(map[string]any)
+		if err := rows.MapScan(row); err != nil {
+			return res, err
+		}
+		res = append(res, row)
+	}
+	return res, nil
+}
+
+func (a *App) getColumns(tblName string) ([]string, error) {
+	var names []string
+	query := fmt.Sprintf("SELECT name FROM pragma_table_info('%s')", tblName)
+	if err := a.db.Select(&names, query); err != nil {
+		return names, err
+	}
+	return names, nil
 }

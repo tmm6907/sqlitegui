@@ -11,16 +11,18 @@ import (
 	"github.com/jmoiron/sqlx"
 )
 
+func (a *App) getCurrentDB() (string, error) {
+	var dbName string
+	if a.db == nil {
+		return "", errors.New("now db found")
+	}
+	if err := a.db.Get(&dbName, "SELECT current_db from main.current_db where id=1;"); err != nil {
+		return "", err
+	}
+	return dbName, nil
+}
+
 func (a *App) SetCurrentDB(name string) AppResult {
-	// if name == "" {
-	// 	err := errors.New("invalid name")
-	// 	a.logger.Error(err.Error())
-	// 	return a.newResult(
-	// 		err,
-	// 		nil,
-	// 		nil,
-	// 	)
-	// }
 	if _, err := a.db.Exec(
 		`INSERT INTO main.current_db (id, current_db)
 		VALUES (1, ?)
@@ -41,17 +43,6 @@ func (a *App) SetCurrentDB(name string) AppResult {
 	)
 }
 
-func (a *App) getCurrentDB() (string, error) {
-	var dbName string
-	if a.db == nil {
-		return "", errors.New("now db found")
-	}
-	if err := a.db.Get(&dbName, "SELECT current_db from main.current_db where id=1;"); err != nil {
-		return "", err
-	}
-	return dbName, nil
-}
-
 func (a *App) GetCurrentDB() AppResult {
 	name, err := a.getCurrentDB()
 	return a.newResult(
@@ -61,38 +52,6 @@ func (a *App) GetCurrentDB() AppResult {
 	)
 }
 
-func cleanDBName(inputName string) string {
-	// 1. Get the file extension. If there is no extension, this returns an empty string "".
-	ext := filepath.Ext(inputName)
-
-	// 2. Trim the extension.
-	// If ext is an empty string, strings.TrimSuffix does nothing, which is exactly what we want.
-	baseName := strings.TrimSuffix(inputName, ext)
-
-	// Optional: Add further sanitization (like to lowercase or replacing invalid chars) here
-	return strings.ToLower(baseName)
-}
-
-func (a *App) storeDB(name string, path string, appCreated bool) error {
-	attachQuery := fmt.Sprintf("ATTACH '%s' AS %s;", path, name)
-	if _, err := a.db.Exec(attachQuery); err != nil {
-		if strings.Contains(err.Error(), "already in use") {
-			return nil
-		}
-		if appCreated {
-			os.Remove(path)
-		} // Clean up the created file
-		return err
-	}
-	if _, err := a.db.Exec("INSERT OR IGNORE INTO main.dbs (name, path, root, app_created) VALUES (?,?,?,?);", name, path, a.rootPath, appCreated); err != nil {
-		a.db.Exec(fmt.Sprintf("DETACH DATABASE '%s';", name))
-		if appCreated {
-			os.Remove(path)
-		}
-		return err
-	}
-	return nil
-}
 func (a *App) CreateDB(dbForm CreateDBRequest) AppResult {
 	a.logger.Debug(fmt.Sprint(dbForm))
 	if dbForm.Name == "" {
@@ -117,7 +76,7 @@ func (a *App) CreateDB(dbForm CreateDBRequest) AppResult {
 	}
 
 	// --- MODIFICATION START: Ensure unique PHYSICAL file path ---
-	basePath := a.getDBPath(dbForm.Name) // e.g., /path/to/my_db.db
+	basePath := a.getNewDBPath(dbForm.Name) // e.g., /path/to/my_db.db
 	dbPath := basePath
 	suffix := 0
 	const maxAttempts = 100 // Safety break
@@ -182,14 +141,6 @@ func (a *App) CreateDB(dbForm CreateDBRequest) AppResult {
 	)
 }
 
-type UpdateRequest struct {
-	DB     string  `json:"db"`
-	Table  string  `json:"table"`
-	Row    [][]any `json:"row"`
-	Column string  `json:"column"`
-	Value  string  `json:"value"`
-}
-
 func (a *App) UpdateDB(req UpdateRequest) AppResult {
 	var pks []string
 	a.logger.Debug(fmt.Sprint(req))
@@ -248,28 +199,29 @@ func (a *App) UpdateDB(req UpdateRequest) AppResult {
 
 func (a *App) RemoveDB(dbName string) AppResult {
 	if dbName == "" {
-		a.logger.Error("invalid db name")
 		return a.newResult(errors.New("invalid db name"), map[string]any{"error": "invalid db name"}, nil)
 	}
-	type SQLResult struct {
+	type DBInfo struct {
 		Name string `db:"name"`
 		File string `db:"file"`
 	}
-	var sqlResult SQLResult
-	if err := a.db.Get(&sqlResult, "SELECT dbs.name, dbs.file FROM pragma_database_list dbs JOIN main.dbs mdbs ON dbs.file = mdbs.path WHERE mdbs.name = ?", dbName); err != nil {
+	var targetDB DBInfo
+	if err := a.db.Get(&targetDB, "SELECT dbs.name, dbs.file FROM pragma_database_list dbs JOIN main.dbs mdbs ON dbs.file = mdbs.path WHERE mdbs.name = ? LIMIT 1;", dbName); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil, nil)
 	}
-	if _, err := a.db.Exec("DELETE FROM main.dbs where name = ? ;", dbName); err != nil {
-		a.logger.Error(err.Error())
-		return a.newResult(err, map[string]any{"error": err.Error()}, nil)
-	}
-	query := fmt.Sprintf("DETACH DATABASE \"%s\";", sqlResult.Name)
+
+	query := fmt.Sprintf("DETACH DATABASE \"%s\";", targetDB.Name)
 	if _, err := a.db.Exec(query); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, map[string]any{"error": err.Error()}, nil)
 	}
-	if err := os.Remove(sqlResult.File); err != nil {
+
+	if _, err := a.db.Exec("DELETE FROM main.dbs where name = ? ;", dbName); err != nil {
+		a.logger.Error(err.Error())
+		return a.newResult(err, map[string]any{"error": err.Error()}, nil)
+	}
+	if err := os.Remove(targetDB.File); err != nil {
 		a.logger.Error(err.Error())
 		return a.newResult(err, nil, nil)
 	}
