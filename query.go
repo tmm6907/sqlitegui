@@ -57,9 +57,7 @@ func (a *App) handleSelectQueries(query string, editable bool) AppResult {
 }
 
 func (a *App) Query(q QueryRequest) AppResult {
-	editable := q.Editable
-	query := q.Query
-	if query == "" {
+	if q.Query == "" {
 		return a.newResult(
 			errors.New(BadRequestError),
 			map[string]any{
@@ -68,23 +66,20 @@ func (a *App) Query(q QueryRequest) AppResult {
 			nil,
 		)
 	}
-	if !a.unlocked {
-		q, found := containsAttachStatement(query)
-		if found {
-			return a.newResult(
-				errors.New(BadRequestError),
-				map[string]any{
-					"error": BadRequestError,
-				},
-				nil,
-			)
-		}
-		query = q
+	q.Query = cleanQuery(q.Query)
+	if !a.unlocked && containsAttachStatement(q.Query) {
+		return a.newResult(
+			errors.New(BadRequestError),
+			map[string]any{
+				"error": BadRequestError,
+			},
+			nil,
+		)
 	}
-	if strings.HasPrefix(strings.ToUpper(query), "SELECT") || strings.HasPrefix(strings.ToUpper(query), "PRAGMA") {
-		return a.handleSelectQueries(query, editable)
+	if strings.HasPrefix(strings.ToUpper(q.Query), "SELECT") || strings.HasPrefix(strings.ToUpper(q.Query), "PRAGMA") {
+		return a.handleSelectQueries(q.Query, q.Editable)
 	} else {
-		result, err := a.db.Exec(query)
+		result, err := a.db.Exec(q.Query)
 		if err != nil {
 			a.logger.Error("query failed to execute", slog.Any("error", err))
 			return a.newResult(

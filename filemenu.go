@@ -226,21 +226,21 @@ func (a *App) exportDB(format string) {
 		newDB, err := sqlx.Connect("sqlite3", selection)
 		if err != nil {
 			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+			a.emit(DB_EXPORT_FAIL, err.Error())
 			return
 		}
 		defer newDB.Close()
 		dbs, err := a.getStoredDBs()
 		if err != nil {
 			a.logger.Error(err.Error())
-			runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+			a.emit(DB_EXPORT_FAIL, err.Error())
 			return
 		}
 		for _, db := range dbs {
 			tblNames, err := a.getTableList(db.Path)
 			if err != nil {
 				a.logger.Error(err.Error())
-				runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+				a.emit(DB_EXPORT_FAIL, err.Error())
 				return
 			}
 			for _, tblName := range tblNames {
@@ -251,7 +251,7 @@ func (a *App) exportDB(format string) {
 
 				if err := a.db.Select(&colInfos, fmt.Sprintf("PRAGMA %s.table_info(%s);", db.Name, tblName)); err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 				if len(colInfos) == 0 {
@@ -282,7 +282,7 @@ func (a *App) exportDB(format string) {
 				tx, err := newDB.Begin()
 				if err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 
@@ -290,7 +290,7 @@ func (a *App) exportDB(format string) {
 				if _, err = tx.Exec(createSQL); err != nil {
 					tx.Rollback()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 
@@ -299,7 +299,7 @@ func (a *App) exportDB(format string) {
 				if err != nil {
 					tx.Rollback()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 
@@ -309,7 +309,7 @@ func (a *App) exportDB(format string) {
 					tx.Rollback()
 					stmt.Close()
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 
@@ -359,14 +359,14 @@ func (a *App) exportDB(format string) {
 				if rollbackErr != nil {
 					tx.Rollback()
 					a.logger.Error("transaction failed")
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": "transaction failed"})
+					a.emit(DB_EXPORT_FAIL, "transaction failed")
 					return
 				}
 
 				// I. Commit the Transaction for this table
 				if err = tx.Commit(); err != nil {
 					a.logger.Error(err.Error())
-					runtime.EventsEmit(a.ctx, DB_EXPORT_FAIL.String(), map[string]any{"error": err.Error()})
+					a.emit(DB_EXPORT_FAIL, err.Error())
 					return
 				}
 				a.logger.Info(fmt.Sprintf("Successfully exported table: %s", newName))
@@ -415,15 +415,8 @@ func (a *App) exportDB(format string) {
 		}
 
 		// PRAGMA database_list; new folders for each db, each table is a file
-	case "":
-		filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-			Title:           "Save Exported Data",
-			DefaultFilename: "export.zip",
-			Filters: []runtime.FileFilter{
-				{DisplayName: "DB Export file (*.zip)", Pattern: "*.zip;"},
-			},
-		})
-		a.logger.Debug(fmt.Sprint(filePath, err))
+	default:
+		a.emit(DB_EXPORT_FAIL, "invalid")
 		// PRAGMA database_list; new folders for each db, each table is a file
 		// export all dbs as zip
 	}
@@ -468,7 +461,7 @@ func (a *App) uploadDB() {
 		case map[string]any:
 
 			for tblName, tblData := range data {
-				tableNames = append(tableNames, cleanTableName(tblName))
+				tableNames = append(tableNames, sqlSanitize(tblName))
 				a.logger.Debug(fmt.Sprint(tblData))
 				if sliceData, ok := tblData.([]any); ok {
 					finalDataframe := make(Dataframe, 0, len(sliceData))
@@ -528,7 +521,7 @@ func (a *App) uploadDB() {
 			rowData := make(Series)
 			for i, name := range fieldNames {
 				if i < len(row) {
-					cleanedName := cleanTableName(name)
+					cleanedName := sqlSanitize(name)
 					rowData[cleanedName] = determineFieldType(row[i])
 				}
 			}

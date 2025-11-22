@@ -36,6 +36,22 @@ func (s Set) String() string {
 	}
 	return strings.Join(items, ", ")
 }
+
+func Map[T, V any](s []T, transform func(t T) V) []V {
+	res := make([]V, len(s))
+	for i, v := range s {
+		res[i] = transform(v)
+	}
+	return res
+}
+
+func Reduce[T, V any](s []T, initial V, reduce func(acc V, curr T) V) V {
+	res := initial
+	for _, v := range s {
+		res = reduce(res, v)
+	}
+	return res
+}
 func main() {
 	s := newSet(false, "apples", 32, 5, struct{ name string }{"thomas"})
 	fmt.Println("Set: ", s)
@@ -48,4 +64,10 @@ func main() {
 	s.Remove(5)
 	s.Remove("carrots")
 	fmt.Println("Set: ", s)
+
+	data := []any{1, []string{"stuff"}, 6, 342, 6}
+	doubled := Map(data, func(x any) string {
+		return fmt.Sprintf("angler : %v", x)
+	})
+	fmt.Println(doubled)
 }

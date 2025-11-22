@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 //go:embed build.sql
@@ -68,53 +69,95 @@ func (t DBFileType) String() string {
 	return string(t)
 }
 
-func containsAttachStatement(query string) (string, bool) {
-	illegalStatement := false
-	statements := strings.Split(query, "\n")
+func cleanQuery(query string) string {
+	trimmedQuery := strings.TrimSpace(query)
 
-	for _, statement := range statements {
+	// 2. Split by semicolon
+	statements := strings.Split(trimmedQuery, ";")
 
-		if strings.HasPrefix(strings.ToUpper(statement), "ATTACH") {
-			illegalStatement = true
-		}
-		if strings.HasPrefix(strings.ToUpper(statement), "DETACH") {
-			illegalStatement = true
+	// 3. Trim inner whitespace of each fragment
+	var cleanedStatements []string
+	for _, stmt := range statements {
+		// Trim each fragment individually before rejoining
+		trimmedStmt := strings.TrimSpace(stmt)
+		if trimmedStmt != "" {
+			cleanedStatements = append(cleanedStatements, trimmedStmt)
 		}
 	}
 
-	return strings.Join(statements, " "), illegalStatement
+	// 4. Join with the standardized separator
+	// Note: Removed empty statements from the slice above.
+	return strings.Join(cleanedStatements, "; ")
 }
 
-func parseFile(selection string) (string, string) {
-	baseName := filepath.Base(selection)
-	fileExt := filepath.Ext(baseName)
-	dbNameWithExt := strings.TrimSuffix(baseName, fileExt)
+func containsAttachStatement(query string) bool {
+	statements := strings.SplitSeq(strings.TrimSpace(query), ";")
+	for statement := range statements {
+		trimmedStatement := strings.ToUpper(strings.TrimSpace(statement))
+		if strings.HasPrefix(trimmedStatement, "ATTACH") || strings.HasPrefix(trimmedStatement, "DETACH") {
+			return true
+		}
+	}
+	return false
+}
 
-	sanitizedName := reDuplicate.ReplaceAllString(dbNameWithExt, "")
+// Returns safe DB name and file ext of the file
+func parseFile(file string) (string, string) {
+	if file == "" {
+		return file, ""
+	}
+	baseName := filepath.Base(file)
+	var fileExt string
+	if !strings.HasPrefix(baseName, ".") {
+		fileExt = filepath.Ext(baseName)
+	}
+	dbNameWithoutExt := strings.TrimSuffix(baseName, fileExt)
+
+	sanitizedName := reDuplicate.ReplaceAllString(dbNameWithoutExt, "")
 	dbName := illegalDBChars.ReplaceAllString(sanitizedName, "_")
 	return cleanDBName(dbName), fileExt
 }
 
-func cleanTableName(name string) string {
-	name = strings.TrimSpace(name)
-	name = illegalDBChars.ReplaceAllString(name, "_")
-	if name != "" && name[0] >= '0' && name[0] <= '9' {
-		name = "_" + name
+func sqlSanitize(tblName string) string {
+	if tblName == "" {
+		return `""`
 	}
-	name = strings.ReplaceAll(name, "__", "_")
-	for strings.Contains(name, "__") {
-		name = strings.ReplaceAll(name, "__", "_")
+
+	tblName = strings.TrimSpace(tblName)
+	tblName = illegalDBChars.ReplaceAllString(tblName, "_")
+
+	nameRunes := []rune(tblName)
+	if len(nameRunes) == 0 {
+		return `""`
 	}
-	name = strings.ToLower(strings.Trim(name, "_"))
-	return fmt.Sprintf(`"%s"`, name)
+	startsWithDigit := unicode.IsDigit(nameRunes[0])
+
+	if startsWithDigit {
+		tblName = "_" + tblName
+	}
+	for strings.Contains(tblName, "__") {
+		tblName = strings.ReplaceAll(tblName, "__", "_")
+	}
+	if !startsWithDigit {
+		tblName = strings.Trim(tblName, "_")
+	}
+
+	return fmt.Sprintf(`"%s"`, strings.ToLower(tblName))
 }
 
-func cleanDBName(inputName string) string {
-	inputName = strings.TrimSpace(inputName)
-	return strings.ToLower(
-		strings.TrimSuffix(
-			inputName,
-			filepath.Ext(inputName),
-		),
-	)
+func cleanDBName(file string) string {
+	// 1. Get the actual filename component
+	baseName := filepath.Base(file)
+
+	// 2. Get the extension from the filename
+	fileExt := filepath.Ext(baseName)
+
+	// 3. Trim the extension from the filename (baseName)
+	trimmedName := strings.TrimSuffix(baseName, fileExt)
+
+	// 4. Handle remaining parts of the path (if you need the path cleaned)
+	// NOTE: This is complex and usually not necessary if you only want the name.
+
+	// 5. Return the cleaned name (lowercase and trimmed)
+	return strings.ToLower(strings.TrimSpace(trimmedName))
 }

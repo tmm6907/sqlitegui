@@ -2,3 +2,5 @@ build/
 node_modules
 frontend/dist
 frontend/.vite
+dbs/
+example/

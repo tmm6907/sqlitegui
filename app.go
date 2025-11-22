@@ -167,8 +167,8 @@ func (a *App) getNewDBPath(dbName string) string {
 // }
 
 type EmitEvent struct {
-	Type WailsEmitType
-	Msg  string
+	Type WailsEmitType `json:"type,omitempty"`
+	Msg  string        `json:"msg,omitempty"`
 }
 
 func (a *App) newResult(err error, results any, emit *EmitEvent) AppResult {

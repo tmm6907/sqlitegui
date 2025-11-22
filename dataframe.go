@@ -11,6 +11,9 @@ import (
 )
 
 func castToSQLiteType(t reflect.Type) string {
+	if t == nil {
+		return "TEXT"
+	}
 	switch t.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return "INTEGER"
@@ -42,18 +45,15 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 
 	firstRow := df[0]
 	columnDefinitions := ""
-	columnNames := []string{}
+	columnNames := make(map[string]string)
 
 	for colName, value := range firstRow {
 		valueType := reflect.TypeOf(value)
-		if valueType == nil {
-			continue
-		}
 		sqliteType := castToSQLiteType(valueType)
-		// name := cleanTableName(colName)
-		name := colName
-		columnDefinitions += fmt.Sprintf("%s %s, ", name, sqliteType)
-		columnNames = append(columnNames, name)
+		// fmt.Println(sqliteType)
+		// name := sqlSanitize(colName)
+		columnDefinitions += fmt.Sprintf("%s %s, ", colName, sqliteType)
+		columnNames[colName] = sqlSanitize(colName)
 	}
 
 	if len(columnNames) == 0 {
@@ -70,13 +70,19 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	if _, err := db.Exec(createTableSQL); err != nil {
 		return fmt.Errorf("error creating table %s: %w | %s", tableName, err, createTableSQL)
 	}
-	log.Println(createTableSQL)
+	// log.Println(createTableSQL)
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(columnNames)), ", ")
+	var dfColNames []string
+	var tblColNames []string
+	for k, v := range columnNames {
+		dfColNames = append(dfColNames, k)
+		tblColNames = append(tblColNames, v)
+	}
 	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
-		strings.Join(columnNames, ", "),
+		strings.Join(tblColNames, ", "),
 		placeholders)
-
+	// log.Println(insertSQL)
 	tx, err := db.Begin() // Start transaction on the NEW database
 	if err != nil {
 		return err
@@ -90,12 +96,16 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	defer stmt.Close()
 
 	for _, row := range df {
-		values := make([]any, len(columnNames))
+		values := make([]any, len(dfColNames))
 		// log.Println(row)
-		for i, colName := range columnNames {
-			value := row[colName]
+		for i, colName := range dfColNames {
+			value, ok := row[colName]
+			if !ok {
+				return fmt.Errorf("invalid column name %s", colName)
+			}
 
 			v := reflect.ValueOf(value)
+			log.Println(row, value, v)
 
 			if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Map || v.Kind() == reflect.Struct || v.Kind() == reflect.Array) {
 				jsonBytes, marshalErr := json.Marshal(value)
