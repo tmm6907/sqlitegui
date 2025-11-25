@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 
@@ -50,8 +49,6 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	for colName, value := range firstRow {
 		valueType := reflect.TypeOf(value)
 		sqliteType := castToSQLiteType(valueType)
-		// fmt.Println(sqliteType)
-		// name := sqlSanitize(colName)
 		columnDefinitions += fmt.Sprintf("%s %s, ", colName, sqliteType)
 		columnNames[colName] = sqlSanitize(colName)
 	}
@@ -72,8 +69,8 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	}
 	// log.Println(createTableSQL)
 	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(columnNames)), ", ")
-	var dfColNames []string
-	var tblColNames []string
+	dfColNames := make([]string, 0, len(columnNames))
+	tblColNames := make([]string, 0, len(columnNames))
 	for k, v := range columnNames {
 		dfColNames = append(dfColNames, k)
 		tblColNames = append(tblColNames, v)
@@ -81,9 +78,10 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 		tableName,
 		strings.Join(tblColNames, ", "),
-		placeholders)
-	// log.Println(insertSQL)
-	tx, err := db.Begin() // Start transaction on the NEW database
+		placeholders,
+	)
+
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
@@ -105,7 +103,6 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 			}
 
 			v := reflect.ValueOf(value)
-			log.Println(row, value, v)
 
 			if v.IsValid() && (v.Kind() == reflect.Slice || v.Kind() == reflect.Map || v.Kind() == reflect.Struct || v.Kind() == reflect.Array) {
 				jsonBytes, marshalErr := json.Marshal(value)
@@ -127,14 +124,9 @@ func convertToSQLite(d *Dataframe, db *sqlx.DB, tableName string) error {
 	}
 
 	if err = tx.Commit(); err != nil {
+		tx.Rollback()
 		return fmt.Errorf("error committing transaction: %w", err)
 	}
 
 	return nil
-}
-
-// map{dbName: map{ tableName : [map {columnName: value}]}}
-
-func convertFromSQLite(db *sqlx.DB) (*Dataframe, error) {
-	return nil, nil
 }

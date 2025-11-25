@@ -5,7 +5,7 @@ go 1.25.3
 require (
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/mattn/go-sqlite3 v1.14.22
-	github.com/tmm6907/slice v1.2.1
+	github.com/tmm6907/slice v1.2.4
 	github.com/wailsapp/wails/v2 v2.10.2
 )
 
